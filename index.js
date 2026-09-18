@@ -1,1474 +1,1510 @@
 require("dotenv").config();
 
+const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
-const https = require("https");
-const express = require("express");
 const WebSocket = require("ws");
 
 const {
-    joinVoiceChannel,
-    createAudioPlayer,
-    createAudioResource,
-    AudioPlayerStatus,
-    VoiceConnectionStatus,
-    StreamType,
-    NoSubscriberBehavior,
-    entersState
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  VoiceConnectionStatus,
+  StreamType,
+  entersState
 } = require("@discordjs/voice");
+
+const {
+  generateDependencyReport
+} = require("@discordjs/voice");
+
+// ============================================================
+// CONFIG
+// ============================================================
 
 const TOKEN = process.env.DISCORD_TOKEN;
 
-if (!TOKEN) {
-    console.error("❌ DISCORD_TOKEN is missing.");
-    process.exit(1);
-}
-
-const API_VERSION = "10";
-const GATEWAY_URL =
-    `wss://gateway.discord.gg/?v=${API_VERSION}&encoding=json`;
-
 const APPLICATION_ID =
-    process.env.APPLICATION_ID || "1550323613708714024";
+  process.env.APPLICATION_ID || "1550323613708714024";
 
 const GUILD_ID =
-    process.env.GUILD_ID || "1316737145901285386";
+  process.env.GUILD_ID || "1316737145901285386";
 
 const VOICE_CHANNEL_ID =
-    process.env.VOICE_CHANNEL_ID || "1549830484618383424";
+  process.env.VOICE_CHANNEL_ID || "1549830484618383424";
+
+const PORT = process.env.PORT || 10000;
 
 const MUSIC_FOLDER = path.join(__dirname, "music");
 
+const GATEWAY_URL =
+  "wss://gateway.discord.gg/?v=10&encoding=json";
+
+const API_BASE =
+  "https://discord.com/api/v10";
+
 const INTENTS =
-    1 +       // GUILDS
-    128;      // GUILD_VOICE_STATES
+  1 | 128; // GUILDS + GUILD_VOICE_STATES
 
-let gateway = null;
-let heartbeatTimer = null;
-let heartbeatInterval = null;
-let reconnectTimer = null;
+// IMPORTANT:
+// Leave this FALSE.
+// The commands already exist in Discord.
+// Setting this to TRUE is only needed when we intentionally
+// want to update/register the slash commands.
+const REGISTER_COMMANDS =
+  process.env.REGISTER_COMMANDS === "true";
 
-let botUser = null;
-let sequence = null;
-let identified = false;
+// ============================================================
+// STARTUP
+// ============================================================
 
-const voiceAdapters = new Map();
-const voiceConnections = new Map();
-const players = new Map();
-
-const queues = new Map();
-
+console.log("");
 console.log("========================================");
 console.log("🎵 COZY MUSIC");
 console.log("========================================");
+console.log("");
 console.log("Node.js:", process.version);
 console.log("Application ID:", APPLICATION_ID);
 console.log("Guild ID:", GUILD_ID);
 console.log("Voice Channel ID:", VOICE_CHANNEL_ID);
 console.log("Music folder:", MUSIC_FOLDER);
 console.log("----------------------------------------");
+console.log("");
 console.log("Token found:", !!TOKEN);
 console.log("Token will NOT be printed.");
+console.log("");
 console.log("========================================");
+console.log("");
 
+// ============================================================
+// TOKEN CHECK
+// ============================================================
 
-/* =========================================================
-   WEB SERVER
-   ========================================================= */
-
-const app = express();
-
-app.get("/", (req, res) => {
-    res.send("🎵 Cozy Music is running!");
-});
-
-app.get("/health", (req, res) => {
-    res.json({
-        online: true,
-        gatewayConnected:
-            gateway &&
-            gateway.readyState === WebSocket.OPEN,
-        identified,
-        bot: botUser
-            ? {
-                id: botUser.id,
-                username: botUser.username
-            }
-            : null
-    });
-});
-
-const PORT = process.env.PORT || 10000;
-
-app.listen(PORT, () => {
-    console.log("");
-    console.log("🌐 Web server listening on port", PORT);
-});
-
-
-/* =========================================================
-   DISCORD REST
-   ========================================================= */
-
-function discordRequest(method, requestPath, body = null) {
-    return new Promise((resolve, reject) => {
-        const data = body === null
-            ? null
-            : Buffer.from(JSON.stringify(body));
-
-        const request = https.request(
-            {
-                hostname: "discord.com",
-                port: 443,
-                path: `/api/v${API_VERSION}${requestPath}`,
-                method,
-                timeout: 30000,
-                headers: {
-                    "Authorization": `Bot ${TOKEN}`,
-                    "User-Agent": "CozyMusic/1.0",
-                    "Accept": "application/json",
-                    ...(data
-                        ? {
-                            "Content-Type": "application/json",
-                            "Content-Length": data.length
-                        }
-                        : {})
-                }
-            },
-            (response) => {
-                let responseBody = "";
-
-                response.setEncoding("utf8");
-
-                response.on("data", (chunk) => {
-                    responseBody += chunk;
-                });
-
-                response.on("end", () => {
-                    let parsed = null;
-
-                    if (responseBody.length > 0) {
-                        try {
-                            parsed = JSON.parse(responseBody);
-                        } catch {
-                            parsed = responseBody;
-                        }
-                    }
-
-                    if (
-                        response.statusCode >= 200 &&
-                        response.statusCode < 300
-                    ) {
-                        resolve(parsed);
-                        return;
-                    }
-
-                    reject(
-                        new Error(
-                            `Discord API ${response.statusCode}: ` +
-                            `${typeof parsed === "string"
-                                ? parsed
-                                : JSON.stringify(parsed)}`
-                        )
-                    );
-                });
-            }
-        );
-
-        request.on("timeout", () => {
-            request.destroy(
-                new Error("Discord REST request timed out.")
-            );
-        });
-
-        request.on("error", reject);
-
-        if (data) {
-            request.write(data);
-        }
-
-        request.end();
-    });
+if (!TOKEN) {
+  console.error("❌ DISCORD_TOKEN is missing.");
+  process.exit(1);
 }
 
+// ============================================================
+// WEB SERVER FOR RENDER
+// ============================================================
 
-/* =========================================================
-   REGISTER SLASH COMMANDS
-   ========================================================= */
+const server = http.createServer((req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/plain"
+  });
 
-const COMMANDS = [
-    {
-        name: "play",
-        description: "Play a song from the Cozy Music library.",
-        options: [
-            {
-                name: "song",
-                description: "The music file to play.",
-                type: 3,
-                required: true
-            }
-        ]
-    },
-    {
-        name: "stop",
-        description: "Stop the music and leave voice."
-    },
-    {
-        name: "pause",
-        description: "Pause the current song."
-    },
-    {
-        name: "resume",
-        description: "Resume the current song."
-    },
-    {
-        name: "skip",
-        description: "Skip the current song."
-    },
-    {
-        name: "queue",
-        description: "Show the current music queue."
-    }
-];
+  res.end("Cozy Music is online!");
+});
 
-async function registerCommands() {
-    console.log("");
-    console.log("========================================");
-    console.log("REGISTERING SLASH COMMANDS");
-    console.log("========================================");
+server.listen(PORT, "0.0.0.0", () => {
+  console.log("🌐 Web server listening on port", PORT);
+});
 
-    try {
-        await discordRequest(
-            "PUT",
-            `/applications/${APPLICATION_ID}/guilds/${GUILD_ID}/commands`,
-            COMMANDS
-        );
+// ============================================================
+// MUSIC
+// ============================================================
 
-        console.log("✅ Slash commands registered.");
-        console.log("Commands:");
-        console.log("  /play");
-        console.log("  /stop");
-        console.log("  /pause");
-        console.log("  /resume");
-        console.log("  /skip");
-        console.log("  /queue");
-    } catch (error) {
-        console.error("❌ Failed to register commands.");
-        console.error(error.message);
-    }
-}
+let musicFiles = [];
 
-
-/* =========================================================
-   MUSIC FILES
-   ========================================================= */
-
-function getMusicFiles() {
+function loadMusicFiles() {
+  try {
     if (!fs.existsSync(MUSIC_FOLDER)) {
-        return [];
+      console.error("❌ Music folder does not exist:", MUSIC_FOLDER);
+      return;
     }
 
-    return fs
-        .readdirSync(MUSIC_FOLDER)
-        .filter((file) => {
-            const lower = file.toLowerCase();
+    musicFiles = fs
+      .readdirSync(MUSIC_FOLDER)
+      .filter(file => {
+        return file.toLowerCase().endsWith(".mp3");
+      })
+      .sort((a, b) => a.localeCompare(b));
 
-            return (
-                lower.endsWith(".mp3") ||
-                lower.endsWith(".wav") ||
-                lower.endsWith(".ogg") ||
-                lower.endsWith(".webm")
-            );
-        });
+    console.log("");
+    console.log("🎵 MUSIC FILES FOUND:", musicFiles.length);
+
+    for (const file of musicFiles) {
+      console.log("   🎶", file);
+    }
+
+    console.log("");
+  } catch (error) {
+    console.error("❌ Could not read music folder:", error);
+  }
 }
 
-function findMusicFile(searchName) {
-    const files = getMusicFiles();
+loadMusicFiles();
 
-    const cleanSearch = searchName
-        .trim()
-        .toLowerCase();
+// ============================================================
+// AUDIO STATE
+// ============================================================
 
-    let exact = files.find(
-        (file) => file.toLowerCase() === cleanSearch
-    );
+let audioPlayer = null;
+let voiceConnection = null;
+let currentSong = null;
+let queue = [];
+let currentSongIndex = 0;
 
-    if (exact) {
-        return exact;
+// ============================================================
+// DISCORD GATEWAY STATE
+// ============================================================
+
+let gateway = null;
+let heartbeatTimer = null;
+let sequence = null;
+let sessionId = null;
+let botUser = null;
+
+let voiceState = null;
+let voiceServer = null;
+
+let voiceAdapterMethods = null;
+
+// ============================================================
+// REST RATE LIMIT STATE
+// ============================================================
+
+let globalRateLimitedUntil = 0;
+
+// ============================================================
+// DISCORD REST REQUEST
+// ============================================================
+
+function discordRequest(method, endpoint, body = null) {
+  return new Promise((resolve, reject) => {
+    const now = Date.now();
+
+    if (globalRateLimitedUntil > now) {
+      const waitMs = globalRateLimitedUntil - now;
+
+      return reject(
+        new Error(
+          `Discord API is temporarily rate limited. Retry in ${Math.ceil(
+            waitMs / 1000
+          )} seconds.`
+        )
+      );
     }
 
-    if (!cleanSearch.endsWith(".mp3")) {
-        exact = files.find(
-            (file) =>
-                file.toLowerCase() ===
-                `${cleanSearch}.mp3`.toLowerCase()
-        );
+    const url = new URL(API_BASE + endpoint);
 
-        if (exact) {
-            return exact;
-        }
-    }
+    const requestBody =
+      body !== null ? JSON.stringify(body) : null;
 
-    return files.find(
-        (file) =>
-            file
-                .toLowerCase()
-                .includes(cleanSearch)
-    ) || null;
-}
-
-
-/* =========================================================
-   VOICE ADAPTER
-   ========================================================= */
-
-function createRawVoiceAdapterCreator(guildId) {
-    return (methods) => {
-        const adapter = {
-            destroyed: false,
-
-            sendPayload(payload) {
-                if (this.destroyed) {
-                    return false;
-                }
-
-                if (
-                    !gateway ||
-                    gateway.readyState !== WebSocket.OPEN
-                ) {
-                    console.error(
-                        "❌ Cannot send voice state: Gateway is not connected."
-                    );
-
-                    return false;
-                }
-
-                try {
-                    gateway.send(
-                        JSON.stringify(payload)
-                    );
-
-                    return true;
-                } catch (error) {
-                    console.error(
-                        "❌ Failed to send voice payload:",
-                        error
-                    );
-
-                    return false;
-                }
-            },
-
-            destroy() {
-                if (this.destroyed) {
-                    return;
-                }
-
-                this.destroyed = true;
-
-                voiceAdapters.delete(guildId);
-
-                try {
-                    methods.destroy();
-                } catch {}
-            },
-
-            onVoiceStateUpdate(data) {
-                if (this.destroyed) {
-                    return;
-                }
-
-                methods.onVoiceStateUpdate(data);
-            },
-
-            onVoiceServerUpdate(data) {
-                if (this.destroyed) {
-                    return;
-                }
-
-                methods.onVoiceServerUpdate(data);
-            }
-        };
-
-        voiceAdapters.set(guildId, adapter);
-
-        return adapter;
+    const options = {
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method,
+      headers: {
+        Authorization: `Bot ${TOKEN}`,
+        "User-Agent":
+          "CozyMusicBot/1.0 DiscordBot",
+        Accept: "application/json"
+      }
     };
-}
 
+    if (requestBody !== null) {
+      options.headers["Content-Type"] =
+        "application/json";
 
-/* =========================================================
-   VOICE EVENTS
-   ========================================================= */
-
-function handleVoiceStateUpdate(data) {
-    if (!botUser) {
-        return;
+      options.headers["Content-Length"] =
+        Buffer.byteLength(requestBody);
     }
 
-    if (data.user_id !== botUser.id) {
-        return;
-    }
+    const req = https.request(options, res => {
+      let data = "";
 
-    const guildId = data.guild_id;
+      res.setEncoding("utf8");
 
-    if (!guildId) {
-        return;
-    }
+      res.on("data", chunk => {
+        data += chunk;
+      });
 
-    const adapter = voiceAdapters.get(guildId);
+      res.on("end", () => {
+        const status = res.statusCode;
 
-    if (!adapter) {
-        return;
-    }
+        // ----------------------------------------------------
+        // RATE LIMITED
+        // ----------------------------------------------------
 
-    console.log(
-        "🔊 VOICE_STATE_UPDATE received."
-    );
+        if (status === 429) {
+          let parsed = {};
 
-    console.log(
-        "Channel:",
-        data.channel_id
-    );
+          try {
+            parsed = JSON.parse(data);
+          } catch (_) {}
 
-    adapter.onVoiceStateUpdate(data);
+          let retryAfter =
+            Number(parsed.retry_after || 60);
 
-    if (!data.channel_id) {
-        console.log(
-            "🔊 Bot was disconnected from voice."
-        );
-    }
-}
+          if (!Number.isFinite(retryAfter)) {
+            retryAfter = 60;
+          }
 
-function handleVoiceServerUpdate(data) {
-    const guildId = data.guild_id;
+          // Add a little safety time.
+          retryAfter += 2;
 
-    if (!guildId) {
-        return;
-    }
+          globalRateLimitedUntil =
+            Date.now() + retryAfter * 1000;
 
-    const adapter = voiceAdapters.get(guildId);
+          console.error("");
+          console.error(
+            `⏳ Discord REST rate limit: waiting approximately ${retryAfter} seconds.`
+          );
+          console.error("");
 
-    if (!adapter) {
-        return;
-    }
-
-    console.log(
-        "🌐 VOICE_SERVER_UPDATE received."
-    );
-
-    console.log(
-        "Guild:",
-        guildId
-    );
-
-    console.log(
-        "Endpoint:",
-        data.endpoint
-    );
-
-    adapter.onVoiceServerUpdate(data);
-}
-
-
-/* =========================================================
-   GET / CREATE AUDIO PLAYER
-   ========================================================= */
-
-function getPlayer(guildId) {
-    if (players.has(guildId)) {
-        return players.get(guildId);
-    }
-
-    const player = createAudioPlayer({
-        behaviors: {
-            noSubscriber:
-                NoSubscriberBehavior.Pause
+          return reject(
+            new Error(
+              `Discord API 429: temporarily rate limited. Retry in ${retryAfter} seconds.`
+            )
+          );
         }
-    });
 
-    player.on(
-        "error",
-        (error) => {
-            console.error(
-                "❌ Audio player error:",
-                error
-            );
+        // ----------------------------------------------------
+        // OTHER ERROR
+        // ----------------------------------------------------
 
-            playNext(guildId);
+        if (status < 200 || status >= 300) {
+          return reject(
+            new Error(
+              `Discord API ${status}: ${data}`
+            )
+          );
         }
-    );
 
-    player.on(
-        AudioPlayerStatus.Idle,
-        () => {
-            console.log(
-                "🎵 Audio player became idle."
-            );
+        // ----------------------------------------------------
+        // EMPTY RESPONSE
+        // ----------------------------------------------------
 
-            playNext(guildId);
+        if (!data) {
+          return resolve(null);
         }
-    );
 
-    player.on(
-        AudioPlayerStatus.Playing,
-        () => {
-            console.log(
-                "▶️ Audio player is playing."
-            );
-        }
-    );
-
-    player.on(
-        AudioPlayerStatus.Paused,
-        () => {
-            console.log(
-                "⏸️ Audio player is paused."
-            );
-        }
-    );
-
-    players.set(guildId, player);
-
-    return player;
-}
-
-
-/* =========================================================
-   PLAY FILE
-   ========================================================= */
-
-async function playFile(guildId, fileName) {
-    const filePath = path.join(
-        MUSIC_FOLDER,
-        fileName
-    );
-
-    if (!fs.existsSync(filePath)) {
-        throw new Error(
-            `Music file does not exist: ${fileName}`
-        );
-    }
-
-    const connection =
-        voiceConnections.get(guildId);
-
-    if (!connection) {
-        throw new Error(
-            "The bot is not connected to voice."
-        );
-    }
-
-    const player = getPlayer(guildId);
-
-    const resource =
-        createAudioResource(
-            filePath,
-            {
-                inputType: StreamType.Arbitrary
-            }
-        );
-
-    connection.subscribe(player);
-
-    player.play(resource);
-
-    console.log("");
-    console.log("========================================");
-    console.log("🎵 NOW PLAYING");
-    console.log("========================================");
-    console.log(fileName);
-    console.log("========================================");
-}
-
-
-/* =========================================================
-   PLAY NEXT
-   ========================================================= */
-
-async function playNext(guildId) {
-    const queue = queues.get(guildId);
-
-    if (!queue || queue.length === 0) {
-        console.log(
-            "🎵 Queue is empty."
-        );
-
-        return;
-    }
-
-    const nextSong = queue.shift();
-
-    try {
-        await playFile(
-            guildId,
-            nextSong
-        );
-    } catch (error) {
-        console.error(
-            "❌ Could not play next song:",
-            error.message
-        );
-
-        await playNext(guildId);
-    }
-}
-
-
-/* =========================================================
-   JOIN VOICE
-   ========================================================= */
-
-async function connectToVoice(guildId) {
-    if (voiceConnections.has(guildId)) {
-        const existing =
-            voiceConnections.get(guildId);
-
-        if (
-            existing.state.status !==
-            VoiceConnectionStatus.Destroyed
-        ) {
-            return existing;
-        }
-    }
-
-    console.log("");
-    console.log("========================================");
-    console.log("🔊 JOINING VOICE");
-    console.log("========================================");
-    console.log("Guild:", guildId);
-    console.log("Channel:", VOICE_CHANNEL_ID);
-
-    const connection = joinVoiceChannel({
-        guildId,
-        channelId: VOICE_CHANNEL_ID,
-
-        adapterCreator:
-            createRawVoiceAdapterCreator(guildId),
-
-        selfDeaf: false,
-        selfMute: false,
-
-        // Current Discord voice requires DAVE.
-        daveEncryption: true,
-
-        debug: true
-    });
-
-    connection.on(
-        "debug",
-        (message) => {
-            console.log(
-                "VOICE DEBUG:",
-                message
-            );
-        }
-    );
-
-    connection.on(
-        "error",
-        (error) => {
-            console.error(
-                "❌ VOICE CONNECTION ERROR:"
-            );
-
-            console.error(error);
-        }
-    );
-
-    connection.on(
-        "stateChange",
-        (oldState, newState) => {
-            console.log(
-                `🔊 Voice state: ${oldState.status} -> ${newState.status}`
-            );
-        }
-    );
-
-    voiceConnections.set(
-        guildId,
-        connection
-    );
-
-    try {
-        await entersState(
-            connection,
-            VoiceConnectionStatus.Ready,
-            30000
-        );
-
-        console.log("");
-        console.log("========================================");
-        console.log("🎉 VOICE CONNECTION READY");
-        console.log("========================================");
-
-        return connection;
-
-    } catch (error) {
-        console.error("");
-        console.error(
-            "❌ Voice connection did not become ready."
-        );
-
-        console.error(error);
+        // ----------------------------------------------------
+        // JSON RESPONSE
+        // ----------------------------------------------------
 
         try {
-            connection.destroy();
-        } catch {}
+          resolve(JSON.parse(data));
+        } catch (_) {
+          resolve(data);
+        }
+      });
+    });
 
-        voiceConnections.delete(
-            guildId
-        );
+    req.on("error", error => {
+      reject(error);
+    });
 
-        throw error;
+    req.setTimeout(15000, () => {
+      req.destroy(
+        new Error(
+          "Discord API request timed out."
+        )
+      );
+    });
+
+    if (requestBody !== null) {
+      req.write(requestBody);
     }
+
+    req.end();
+  });
 }
 
+// ============================================================
+// INTERACTION RESPONSE
+// ============================================================
 
-/* =========================================================
-   STOP MUSIC
-   ========================================================= */
-
-function stopMusic(guildId) {
-    const player = players.get(guildId);
-
-    if (player) {
-        player.stop(true);
-    }
-
-    queues.set(
-        guildId,
-        []
-    );
-
-    const connection =
-        voiceConnections.get(guildId);
-
-    if (connection) {
-        try {
-            connection.destroy();
-        } catch {}
-
-        voiceConnections.delete(
-            guildId
-        );
-    }
-}
-
-
-/* =========================================================
-   INTERACTION RESPONSES
-   ========================================================= */
-
-async function interactionResponse(
-    interaction,
-    content,
-    ephemeral = false
+async function respondToInteraction(
+  interaction,
+  content,
+  ephemeral = false
 ) {
-    const flags = ephemeral ? 64 : 0;
+  const data = {
+    content
+  };
 
-    return discordRequest(
-        "POST",
-        `/interactions/${interaction.id}/${interaction.token}/callback`,
-        {
-            type: 4,
-            data: {
-                content,
-                flags
-            }
-        }
-    );
+  if (ephemeral) {
+    data.flags = 64;
+  }
+
+  return discordRequest(
+    "POST",
+    `/interactions/${interaction.id}/${interaction.token}/callback`,
+    {
+      type: 4,
+      data
+    }
+  );
 }
 
+// ============================================================
+// DEFER INTERACTION
+// ============================================================
 
-/* =========================================================
-   INTERACTION HANDLER
-   ========================================================= */
+async function deferInteraction(
+  interaction,
+  ephemeral = false
+) {
+  const data = {};
 
-async function handleInteraction(interaction) {
-    if (interaction.type !== 2) {
-        return;
+  if (ephemeral) {
+    data.flags = 64;
+  }
+
+  return discordRequest(
+    "POST",
+    `/interactions/${interaction.id}/${interaction.token}/callback`,
+    {
+      type: 5,
+      data
     }
+  );
+}
 
-    const commandName =
-        interaction.data?.name;
+// ============================================================
+// EDIT DEFERRED RESPONSE
+// ============================================================
 
-    if (!commandName) {
-        return;
+async function editInteractionResponse(
+  interaction,
+  content
+) {
+  return discordRequest(
+    "PATCH",
+    `/webhooks/${APPLICATION_ID}/${interaction.token}/messages/@original`,
+    {
+      content
     }
+  );
+}
 
+// ============================================================
+// REGISTER SLASH COMMANDS
+// ============================================================
+
+async function registerSlashCommands() {
+  if (!REGISTER_COMMANDS) {
     console.log("");
     console.log(
-        `🎵 /${commandName} used`
+      "ℹ️ Slash command registration is disabled."
+    );
+    console.log(
+      "ℹ️ Existing Discord commands will be used."
+    );
+    console.log("");
+    return;
+  }
+
+  console.log("");
+  console.log("========================================");
+  console.log("REGISTERING SLASH COMMANDS");
+  console.log("========================================");
+
+  const commands = [
+    {
+      name: "play",
+      description: "Play a cozy music track.",
+      options: [
+        {
+          name: "song",
+          description: "Choose a music track.",
+          type: 3,
+          required: true,
+          choices: musicFiles
+            .slice(0, 25)
+            .map(file => ({
+              name:
+                file.length > 100
+                  ? file.substring(0, 100)
+                  : file,
+              value: file
+            }))
+        }
+      ]
+    },
+
+    {
+      name: "stop",
+      description: "Stop the music."
+    },
+
+    {
+      name: "pause",
+      description: "Pause the music."
+    },
+
+    {
+      name: "resume",
+      description: "Resume the music."
+    },
+
+    {
+      name: "skip",
+      description: "Skip the current song."
+    },
+
+    {
+      name: "queue",
+      description: "Show the music queue."
+    }
+  ];
+
+  try {
+    await discordRequest(
+      "PUT",
+      `/applications/${APPLICATION_ID}/guilds/${GUILD_ID}/commands`,
+      commands
     );
 
-    try {
-        if (commandName === "play") {
-            const option =
-                interaction.data.options?.find(
-                    (item) =>
-                        item.name === "song"
-                );
+    console.log(
+      "✅ Slash commands registered successfully."
+    );
+  } catch (error) {
+    console.error(
+      "❌ Failed to register commands:"
+    );
 
-            const requestedSong =
-                option?.value;
+    console.error(error.message);
 
-            if (!requestedSong) {
-                await interactionResponse(
-                    interaction,
-                    "❌ You need to tell me which song to play.",
-                    true
-                );
+    console.error("");
+    console.error(
+      "The bot will continue running."
+    );
+    console.error("");
+  }
+}
 
-                return;
-            }
+// ============================================================
+// RAW VOICE ADAPTER
+// ============================================================
 
-            const fileName =
-                findMusicFile(
-                    requestedSong
-                );
+function createVoiceAdapterCreator() {
+  return methods => {
+    voiceAdapterMethods = methods;
 
-            if (!fileName) {
-                const files =
-                    getMusicFiles();
+    console.log(
+      "🔊 Voice adapter created."
+    );
 
-                let message =
-                    `❌ I couldn't find **${requestedSong}**.`;
+    return {
+      sendPayload(data) {
+        if (
+          !gateway ||
+          gateway.readyState !== WebSocket.OPEN
+        ) {
+          console.error(
+            "❌ Cannot send voice payload: Gateway is not open."
+          );
 
-                if (files.length > 0) {
-                    message +=
-                        `\n\nAvailable songs:\n${files
-                            .slice(0, 20)
-                            .map(
-                                (file) =>
-                                    `• ${file}`
-                            )
-                            .join("\n")}`;
-
-                    if (files.length > 20) {
-                        message +=
-                            `\n…and ${files.length - 20} more.`;
-                    }
-                }
-
-                await interactionResponse(
-                    interaction,
-                    message,
-                    true
-                );
-
-                return;
-            }
-
-            const guildId =
-                interaction.guild_id;
-
-            if (!guildId) {
-                await interactionResponse(
-                    interaction,
-                    "❌ This command must be used inside the server.",
-                    true
-                );
-
-                return;
-            }
-
-            if (!queues.has(guildId)) {
-                queues.set(
-                    guildId,
-                    []
-                );
-            }
-
-            const player =
-                players.get(guildId);
-
-            const connection =
-                voiceConnections.get(guildId);
-
-            const isPlaying =
-                player &&
-                player.state.status ===
-                AudioPlayerStatus.Playing;
-
-            if (
-                connection &&
-                isPlaying
-            ) {
-                queues
-                    .get(guildId)
-                    .push(fileName);
-
-                await interactionResponse(
-                    interaction,
-                    `🎵 Added **${fileName}** to the queue.`
-                );
-
-                return;
-            }
-
-            await interactionResponse(
-                interaction,
-                `🎵 Loading **${fileName}**...`
-            );
-
-            await connectToVoice(
-                guildId
-            );
-
-            await playFile(
-                guildId,
-                fileName
-            );
-
-            return;
+          return false;
         }
-
-
-        if (commandName === "stop") {
-            stopMusic(
-                interaction.guild_id
-            );
-
-            await interactionResponse(
-                interaction,
-                "⏹️ Stopped the music and left voice."
-            );
-
-            return;
-        }
-
-
-        if (commandName === "pause") {
-            const player =
-                players.get(
-                    interaction.guild_id
-                );
-
-            if (!player) {
-                await interactionResponse(
-                    interaction,
-                    "❌ Nothing is playing.",
-                    true
-                );
-
-                return;
-            }
-
-            player.pause();
-
-            await interactionResponse(
-                interaction,
-                "⏸️ Music paused."
-            );
-
-            return;
-        }
-
-
-        if (commandName === "resume") {
-            const player =
-                players.get(
-                    interaction.guild_id
-                );
-
-            if (!player) {
-                await interactionResponse(
-                    interaction,
-                    "❌ Nothing is playing.",
-                    true
-                );
-
-                return;
-            }
-
-            player.unpause();
-
-            await interactionResponse(
-                interaction,
-                "▶️ Music resumed."
-            );
-
-            return;
-        }
-
-
-        if (commandName === "skip") {
-            const player =
-                players.get(
-                    interaction.guild_id
-                );
-
-            if (!player) {
-                await interactionResponse(
-                    interaction,
-                    "❌ Nothing is playing.",
-                    true
-                );
-
-                return;
-            }
-
-            player.stop();
-
-            await interactionResponse(
-                interaction,
-                "⏭️ Skipping..."
-            );
-
-            return;
-        }
-
-
-        if (commandName === "queue") {
-            const queue =
-                queues.get(
-                    interaction.guild_id
-                ) || [];
-
-            if (queue.length === 0) {
-                await interactionResponse(
-                    interaction,
-                    "🎵 The queue is empty."
-                );
-
-                return;
-            }
-
-            const text =
-                queue
-                    .map(
-                        (song, index) =>
-                            `${index + 1}. ${song}`
-                    )
-                    .join("\n");
-
-            await interactionResponse(
-                interaction,
-                `🎵 **Cozy Music Queue**\n\n${text}`
-            );
-
-            return;
-        }
-
-    } catch (error) {
-        console.error(
-            `❌ Error handling /${commandName}:`
-        );
-
-        console.error(error);
 
         try {
-            await interactionResponse(
-                interaction,
-                "❌ Something went wrong while running that command.",
-                true
-            );
-        } catch (responseError) {
-            console.error(
-                "❌ Could not send error response:",
-                responseError.message
-            );
+          gateway.send(
+            JSON.stringify(data)
+          );
+
+          return true;
+        } catch (error) {
+          console.error(
+            "❌ Voice payload error:",
+            error.message
+          );
+
+          return false;
         }
+      },
+
+      destroy() {
+        console.log(
+          "🔊 Voice adapter destroyed."
+        );
+      }
+    };
+  };
+}
+
+// ============================================================
+// CREATE AUDIO PLAYER
+// ============================================================
+
+function createMusicPlayer() {
+  if (audioPlayer) {
+    return audioPlayer;
+  }
+
+  audioPlayer =
+    createAudioPlayer();
+
+  audioPlayer.on(
+    AudioPlayerStatus.Playing,
+    () => {
+      console.log(
+        "▶️ Audio player is playing:",
+        currentSong
+      );
     }
-}
+  );
 
-
-/* =========================================================
-   GATEWAY
-   ========================================================= */
-
-function startGateway() {
-    console.log("");
-    console.log("========================================");
-    console.log("🌐 CONNECTING TO DISCORD GATEWAY");
-    console.log("========================================");
-
-    gateway = new WebSocket(
-        GATEWAY_URL,
-        {
-            handshakeTimeout: 30000
-        }
-    );
-
-    gateway.on(
-        "open",
-        () => {
-            console.log(
-                "✅ Gateway WebSocket connected."
-            );
-        }
-    );
-
-    gateway.on(
-        "message",
-        (raw) => {
-            let packet;
-
-            try {
-                packet =
-                    JSON.parse(
-                        raw.toString()
-                    );
-            } catch (error) {
-                console.error(
-                    "❌ Could not parse Gateway packet."
-                );
-
-                return;
-            }
-
-            if (
-                packet.s !== undefined &&
-                packet.s !== null
-            ) {
-                sequence =
-                    packet.s;
-            }
-
-            handleGatewayPacket(
-                packet
-            );
-        }
-    );
-
-    gateway.on(
-        "close",
-        (code, reason) => {
-            console.error("");
-            console.error(
-                "⚠️ Discord Gateway closed."
-            );
-
-            console.error(
-                "Close code:",
-                code
-            );
-
-            console.error(
-                "Reason:",
-                reason?.toString() || "none"
-            );
-
-            identified = false;
-
-            if (heartbeatTimer) {
-                clearInterval(
-                    heartbeatTimer
-                );
-
-                heartbeatTimer = null;
-            }
-
-            if (heartbeatInterval) {
-                clearTimeout(
-                    heartbeatInterval
-                );
-
-                heartbeatInterval = null;
-            }
-
-            scheduleGatewayReconnect();
-        }
-    );
-
-    gateway.on(
-        "error",
-        (error) => {
-            console.error(
-                "❌ Gateway WebSocket error:"
-            );
-
-            console.error(error);
-        }
-    );
-}
-
-
-/* =========================================================
-   GATEWAY PACKET HANDLER
-   ========================================================= */
-
-function handleGatewayPacket(packet) {
-    switch (packet.op) {
-
-        case 10:
-            handleHello(
-                packet.d
-            );
-            break;
-
-
-        case 0:
-            handleDispatch(
-                packet.t,
-                packet.d
-            );
-            break;
-
-
-        case 1:
-            sendHeartbeat();
-            break;
-
-
-        case 7:
-            console.log(
-                "🔄 Discord requested reconnect."
-            );
-
-            reconnectGateway();
-            break;
-
-
-        case 9:
-            console.error(
-                "❌ Discord invalidated the session."
-            );
-
-            identified = false;
-
-            if (packet.d?.[0] === false) {
-                console.error(
-                    "❌ Session is not resumable."
-                );
-            }
-
-            reconnectGateway();
-            break;
-
-
-        case 11:
-            console.log(
-                "💓 Heartbeat ACK received."
-            );
-            break;
-
-
-        default:
-            console.log(
-                "Gateway opcode:",
-                packet.op
-            );
+  audioPlayer.on(
+    AudioPlayerStatus.Paused,
+    () => {
+      console.log(
+        "⏸️ Audio player paused."
+      );
     }
+  );
+
+  audioPlayer.on(
+    AudioPlayerStatus.Idle,
+    () => {
+      console.log(
+        "⏹️ Audio player is idle."
+      );
+
+      if (currentSong) {
+        playNextSong();
+      }
+    }
+  );
+
+  audioPlayer.on(
+    "error",
+    error => {
+      console.error(
+        "❌ Audio player error:",
+        error.message
+      );
+
+      playNextSong();
+    }
+  );
+
+  return audioPlayer;
 }
 
+// ============================================================
+// JOIN VOICE CHANNEL
+// ============================================================
 
-/* =========================================================
-   HELLO
-   ========================================================= */
+async function connectToVoice() {
+  console.log("");
+  console.log(
+    "🔊 Connecting to voice channel..."
+  );
 
-function handleHello(data) {
-    console.log("");
-    console.log("========================================");
-    console.log("🎉 DISCORD HELLO RECEIVED");
-    console.log("========================================");
+  if (
+    voiceConnection &&
+    voiceConnection.state.status !==
+      VoiceConnectionStatus.Destroyed
+  ) {
+    console.log(
+      "🔊 Existing voice connection found."
+    );
+
+    return voiceConnection;
+  }
+
+  voiceConnection =
+    joinVoiceChannel({
+      channelId: VOICE_CHANNEL_ID,
+      guildId: GUILD_ID,
+      adapterCreator:
+        createVoiceAdapterCreator(),
+      selfDeaf: true,
+      selfMute: false,
+      daveEncryption: true
+    });
+
+  voiceConnection.on(
+    "stateChange",
+    (oldState, newState) => {
+      console.log(
+        `🔊 Voice state: ${oldState.status} -> ${newState.status}`
+      );
+    }
+  );
+
+  voiceConnection.on(
+    "error",
+    error => {
+      console.error(
+        "❌ Voice connection error:",
+        error.message
+      );
+    }
+  );
+
+  try {
+    await entersState(
+      voiceConnection,
+      VoiceConnectionStatus.Ready,
+      30000
+    );
 
     console.log(
-        "Heartbeat interval:",
-        data.heartbeat_interval,
-        "ms"
+      "✅ Voice connection is READY."
     );
 
-    if (heartbeatTimer) {
-        clearInterval(
-            heartbeatTimer
-        );
+    createMusicPlayer();
+
+    if (audioPlayer) {
+      voiceConnection.subscribe(
+        audioPlayer
+      );
     }
 
-    heartbeatTimer =
-        setInterval(
-            sendHeartbeat,
-            data.heartbeat_interval
-        );
+    return voiceConnection;
+  } catch (error) {
+    console.error("");
+    console.error(
+      "❌ Voice connection did not become ready."
+    );
+    console.error(
+      error.message
+    );
+    console.error("");
 
-    sendHeartbeat();
+    try {
+      voiceConnection.destroy();
+    } catch (_) {}
 
-    identify();
+    voiceConnection = null;
+
+    throw error;
+  }
 }
 
+// ============================================================
+// PLAY SONG
+// ============================================================
 
-/* =========================================================
-   HEARTBEAT
-   ========================================================= */
+async function playSong(fileName) {
+  if (!fileName) {
+    throw new Error(
+      "No song was selected."
+    );
+  }
 
-function sendHeartbeat() {
-    if (
-        !gateway ||
-        gateway.readyState !== WebSocket.OPEN
-    ) {
-        return;
+  const safeName =
+    path.basename(fileName);
+
+  const fullPath =
+    path.join(
+      MUSIC_FOLDER,
+      safeName
+    );
+
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(
+      `Song not found: ${safeName}`
+    );
+  }
+
+  console.log("");
+  console.log(
+    "🎵 PLAYING:",
+    safeName
+  );
+
+  await connectToVoice();
+
+  createMusicPlayer();
+
+  currentSong = safeName;
+
+  const resource =
+    createAudioResource(
+      fullPath,
+      {
+        inputType:
+          StreamType.Arbitrary
+      }
+    );
+
+  audioPlayer.play(resource);
+
+  console.log(
+    "✅ Audio resource started."
+  );
+}
+
+// ============================================================
+// NEXT SONG
+// ============================================================
+
+async function playNextSong() {
+  if (!musicFiles.length) {
+    console.log(
+      "❌ No music files available."
+    );
+
+    return;
+  }
+
+  currentSongIndex++;
+
+  if (
+    currentSongIndex >=
+    musicFiles.length
+  ) {
+    currentSongIndex = 0;
+  }
+
+  const nextSong =
+    musicFiles[currentSongIndex];
+
+  try {
+    await playSong(nextSong);
+  } catch (error) {
+    console.error(
+      "❌ Could not play next song:",
+      error.message
+    );
+  }
+}
+
+// ============================================================
+// STOP
+// ============================================================
+
+function stopMusic() {
+  if (audioPlayer) {
+    audioPlayer.stop();
+  }
+
+  currentSong = null;
+  queue = [];
+
+  console.log(
+    "⏹️ Music stopped."
+  );
+}
+
+// ============================================================
+// PAUSE
+// ============================================================
+
+function pauseMusic() {
+  if (!audioPlayer) {
+    return false;
+  }
+
+  return audioPlayer.pause();
+}
+
+// ============================================================
+// RESUME
+// ============================================================
+
+function resumeMusic() {
+  if (!audioPlayer) {
+    return false;
+  }
+
+  return audioPlayer.unpause();
+}
+
+// ============================================================
+// SKIP
+// ============================================================
+
+async function skipMusic() {
+  if (!audioPlayer) {
+    return;
+  }
+
+  audioPlayer.stop();
+}
+
+// ============================================================
+// QUEUE TEXT
+// ============================================================
+
+function getQueueText() {
+  if (!musicFiles.length) {
+    return "🎵 No music files found.";
+  }
+
+  let text =
+    "🎵 **Cozy Music Library**\n\n";
+
+  for (
+    let i = 0;
+    i < musicFiles.length;
+    i++
+  ) {
+    const marker =
+      musicFiles[i] === currentSong
+        ? "▶️"
+        : "🎶";
+
+    text += `${marker} ${i + 1}. ${musicFiles[i]}\n`;
+  }
+
+  return text;
+}
+
+// ============================================================
+// INTERACTION HANDLER
+// ============================================================
+
+async function handleInteraction(
+  interaction
+) {
+  if (
+    interaction.type !== 2
+  ) {
+    return;
+  }
+
+  const commandName =
+    interaction.data?.name;
+
+  console.log("");
+  console.log(
+    `🎵 /${commandName} used`
+  );
+
+  // ----------------------------------------------------------
+  // PLAY
+  // ----------------------------------------------------------
+
+  if (commandName === "play") {
+    const option =
+      interaction.data?.options?.find(
+        item =>
+          item.name === "song"
+      );
+
+    const song =
+      option?.value;
+
+    if (!song) {
+      try {
+        await respondToInteraction(
+          interaction,
+          "❌ Please choose a song."
+        );
+      } catch (error) {
+        console.error(
+          "❌ Could not respond:",
+          error.message
+        );
+      }
+
+      return;
     }
 
     try {
-        gateway.send(
-            JSON.stringify({
-                op: 1,
-                d: sequence
-            })
-        );
+      // Respond immediately so Discord knows
+      // the interaction was received.
+      await deferInteraction(
+        interaction
+      );
 
-        console.log(
-            "💓 Heartbeat sent."
-        );
+      await playSong(song);
+
+      await editInteractionResponse(
+        interaction,
+        `🎵 Now playing **${song}**`
+      );
+
     } catch (error) {
-        console.error(
-            "❌ Heartbeat failed:",
-            error
+      console.error(
+        "❌ Error handling /play:"
+      );
+
+      console.error(
+        error.message
+      );
+
+      try {
+        await editInteractionResponse(
+          interaction,
+          `❌ ${error.message}`
         );
+      } catch (responseError) {
+        console.error(
+          "❌ Could not send error response:",
+          responseError.message
+        );
+      }
     }
+
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // STOP
+  // ----------------------------------------------------------
+
+  if (commandName === "stop") {
+    try {
+      await respondToInteraction(
+        interaction,
+        "⏹️ Music stopped."
+      );
+
+      stopMusic();
+    } catch (error) {
+      console.error(
+        "❌ /stop error:",
+        error.message
+      );
+    }
+
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // PAUSE
+  // ----------------------------------------------------------
+
+  if (commandName === "pause") {
+    try {
+      const success =
+        pauseMusic();
+
+      await respondToInteraction(
+        interaction,
+        success
+          ? "⏸️ Music paused."
+          : "❌ Nothing is currently playing."
+      );
+    } catch (error) {
+      console.error(
+        "❌ /pause error:",
+        error.message
+      );
+    }
+
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // RESUME
+  // ----------------------------------------------------------
+
+  if (commandName === "resume") {
+    try {
+      const success =
+        resumeMusic();
+
+      await respondToInteraction(
+        interaction,
+        success
+          ? "▶️ Music resumed."
+          : "❌ Nothing is currently paused."
+      );
+    } catch (error) {
+      console.error(
+        "❌ /resume error:",
+        error.message
+      );
+    }
+
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // SKIP
+  // ----------------------------------------------------------
+
+  if (commandName === "skip") {
+    try {
+      await respondToInteraction(
+        interaction,
+        "⏭️ Skipping..."
+      );
+
+      await skipMusic();
+    } catch (error) {
+      console.error(
+        "❌ /skip error:",
+        error.message
+      );
+    }
+
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // QUEUE
+  // ----------------------------------------------------------
+
+  if (commandName === "queue") {
+    try {
+      await respondToInteraction(
+        interaction,
+        getQueueText()
+      );
+    } catch (error) {
+      console.error(
+        "❌ /queue error:",
+        error.message
+      );
+    }
+
+    return;
+  }
 }
 
+// ============================================================
+// GATEWAY SEND
+// ============================================================
 
-/* =========================================================
-   IDENTIFY
-   ========================================================= */
+function gatewaySend(payload) {
+  if (
+    !gateway ||
+    gateway.readyState !== WebSocket.OPEN
+  ) {
+    console.error(
+      "❌ Gateway is not open."
+    );
 
-function identify() {
-    if (identified) {
+    return;
+  }
+
+  gateway.send(
+    JSON.stringify(payload)
+  );
+}
+
+// ============================================================
+// HEARTBEAT
+// ============================================================
+
+function startHeartbeat(interval) {
+  if (heartbeatTimer) {
+    clearInterval(
+      heartbeatTimer
+    );
+  }
+
+  heartbeatTimer =
+    setInterval(() => {
+      if (
+        !gateway ||
+        gateway.readyState !==
+          WebSocket.OPEN
+      ) {
         return;
+      }
+
+      gatewaySend({
+        op: 1,
+        d: sequence
+      });
+
+      console.log(
+        "💓 Heartbeat sent."
+      );
+    }, interval);
+}
+
+// ============================================================
+// GATEWAY CONNECT
+// ============================================================
+
+function connectGateway() {
+  console.log("");
+  console.log(
+    "========================================"
+  );
+  console.log(
+    "🌐 CONNECTING TO DISCORD GATEWAY"
+  );
+  console.log(
+    "========================================"
+  );
+  console.log("");
+
+  gateway =
+    new WebSocket(
+      GATEWAY_URL
+    );
+
+  gateway.on(
+    "open",
+    () => {
+      console.log(
+        "✅ Gateway WebSocket connected."
+      );
     }
+  );
 
-    console.log("");
-    console.log("========================================");
-    console.log("🔐 SENDING IDENTIFY");
-    console.log("========================================");
+  gateway.on(
+    "message",
+    async raw => {
+      let packet;
 
-    const payload = {
-        op: 2,
-        d: {
+      try {
+        packet =
+          JSON.parse(
+            raw.toString()
+          );
+      } catch (error) {
+        console.error(
+          "❌ Invalid Gateway JSON."
+        );
+
+        return;
+      }
+
+      if (
+        packet.s !== undefined &&
+        packet.s !== null
+      ) {
+        sequence = packet.s;
+      }
+
+      // ------------------------------------------------------
+      // HELLO
+      // ------------------------------------------------------
+
+      if (packet.op === 10) {
+        console.log("");
+        console.log(
+          "========================================"
+        );
+        console.log(
+          "🎉 DISCORD HELLO RECEIVED"
+        );
+        console.log(
+          "========================================"
+        );
+
+        const interval =
+          packet.d.heartbeat_interval;
+
+        console.log(
+          "Heartbeat interval:",
+          interval,
+          "ms"
+        );
+
+        startHeartbeat(
+          interval
+        );
+
+        gatewaySend({
+          op: 2,
+          d: {
             token: TOKEN,
             intents: INTENTS,
             properties: {
-                os: "linux",
-                browser: "cozy-music",
-                device: "cozy-music"
+              os: "linux",
+              browser: "cozy-music",
+              device: "cozy-music"
             }
-        }
-    };
-
-    gateway.send(
-        JSON.stringify(payload)
-    );
-
-    console.log(
-        "✅ IDENTIFY sent."
-    );
-}
-
-
-/* =========================================================
-   DISPATCH
-   ========================================================= */
-
-async function handleDispatch(
-    eventName,
-    data
-) {
-    if (!eventName) {
-        return;
-    }
-
-    console.log(
-        "📡 Gateway event:",
-        eventName
-    );
-
-    if (eventName === "READY") {
-        botUser =
-            data.user;
-
-        identified = true;
+          }
+        });
 
         console.log("");
-        console.log("========================================");
-        console.log("🎉🎉 COZY MUSIC IS ONLINE 🎉🎉");
-        console.log("========================================");
-
         console.log(
-            "Bot:",
-            botUser.username
+          "🔐 SENDING IDENTIFY"
         );
-
+        console.log("");
         console.log(
-            "Bot ID:",
-            botUser.id
+          "✅ IDENTIFY sent."
         );
 
+        return;
+      }
+
+      // ------------------------------------------------------
+      // HEARTBEAT ACK
+      // ------------------------------------------------------
+
+      if (packet.op === 11) {
         console.log(
-            "Guilds:",
-            data.guilds?.length || 0
-        );
-
-        console.log("========================================");
-
-        await registerCommands();
-
-        return;
-    }
-
-
-    if (eventName === "INTERACTION_CREATE") {
-        await handleInteraction(
-            data
+          "💓 Heartbeat ACK received."
         );
 
         return;
-    }
+      }
 
+      // ------------------------------------------------------
+      // INVALID SESSION
+      // ------------------------------------------------------
 
-    if (eventName === "VOICE_STATE_UPDATE") {
-        handleVoiceStateUpdate(
-            data
+      if (packet.op === 9) {
+        console.error(
+          "❌ Discord reported an invalid session."
         );
 
-        return;
-    }
-
-
-    if (eventName === "VOICE_SERVER_UPDATE") {
-        handleVoiceServerUpdate(
-            data
-        );
-
-        return;
-    }
-}
-
-
-/* =========================================================
-   RECONNECT
-   ========================================================= */
-
-function scheduleGatewayReconnect() {
-    if (reconnectTimer) {
-        return;
-    }
-
-    reconnectTimer =
         setTimeout(
-            () => {
-                reconnectTimer = null;
-
-                startGateway();
-            },
-            5000
+          connectGateway,
+          5000
         );
-}
 
-function reconnectGateway() {
-    try {
-        if (gateway) {
-            gateway.close();
+        return;
+      }
+
+      // ------------------------------------------------------
+      // DISPATCH
+      // ------------------------------------------------------
+
+      if (packet.op !== 0) {
+        return;
+      }
+
+      const event =
+        packet.t;
+
+      console.log(
+        "📡 Gateway event:",
+        event
+      );
+
+      // ------------------------------------------------------
+      // READY
+      // ------------------------------------------------------
+
+      if (event === "READY") {
+        botUser =
+          packet.d.user;
+
+        sessionId =
+          packet.d.session_id;
+
+        console.log("");
+        console.log(
+          "========================================"
+        );
+        console.log(
+          "🎉🎉 COZY MUSIC IS ONLINE 🎉🎉"
+        );
+        console.log(
+          "========================================"
+        );
+        console.log("");
+        console.log(
+          "Bot:",
+          botUser.username
+        );
+        console.log(
+          "Bot ID:",
+          botUser.id
+        );
+        console.log(
+          "Guilds:",
+          packet.d.guilds?.length || 0
+        );
+        console.log("");
+        console.log(
+          "========================================"
+        );
+        console.log("");
+
+        // IMPORTANT:
+        // Commands are NOT registered automatically.
+        await registerSlashCommands();
+
+        return;
+      }
+
+      // ------------------------------------------------------
+      // VOICE STATE UPDATE
+      // ------------------------------------------------------
+
+      if (
+        event ===
+        "VOICE_STATE_UPDATE"
+      ) {
+        const data =
+          packet.d;
+
+        if (
+          data.user_id ===
+          APPLICATION_ID
+        ) {
+          voiceState =
+            data;
+
+          console.log(
+            "🔊 Bot VOICE_STATE_UPDATE received."
+          );
+
+          if (
+            voiceAdapterMethods &&
+            typeof voiceAdapterMethods
+              .onVoiceStateUpdate ===
+              "function"
+          ) {
+            voiceAdapterMethods
+              .onVoiceStateUpdate(
+                data
+              );
+          }
         }
-    } catch {}
 
-    scheduleGatewayReconnect();
+        return;
+      }
+
+      // ------------------------------------------------------
+      // VOICE SERVER UPDATE
+      // ------------------------------------------------------
+
+      if (
+        event ===
+        "VOICE_SERVER_UPDATE"
+      ) {
+        voiceServer =
+          packet.d;
+
+        console.log(
+          "🔊 VOICE_SERVER_UPDATE received."
+        );
+
+        if (
+          voiceAdapterMethods &&
+          typeof voiceAdapterMethods
+            .onVoiceServerUpdate ===
+            "function"
+        ) {
+          voiceAdapterMethods
+            .onVoiceServerUpdate(
+              packet.d
+            );
+        }
+
+        return;
+      }
+
+      // ------------------------------------------------------
+      // INTERACTION
+      // ------------------------------------------------------
+
+      if (
+        event ===
+        "INTERACTION_CREATE"
+      ) {
+        await handleInteraction(
+          packet.d
+        );
+
+        return;
+      }
+    }
+  );
+
+  gateway.on(
+    "close",
+    (code, reason) => {
+      console.error("");
+      console.error(
+        "❌ Gateway WebSocket closed."
+      );
+      console.error(
+        "Close code:",
+        code
+      );
+      console.error(
+        "Reason:",
+        reason?.toString() || "none"
+      );
+      console.error("");
+
+      if (heartbeatTimer) {
+        clearInterval(
+          heartbeatTimer
+        );
+
+        heartbeatTimer = null;
+      }
+
+      setTimeout(
+        connectGateway,
+        5000
+      );
+    }
+  );
+
+  gateway.on(
+    "error",
+    error => {
+      console.error(
+        "❌ Gateway WebSocket error:",
+        error.message
+      );
+    }
+  );
 }
 
+// ============================================================
+// START
+// ============================================================
 
-/* =========================================================
-   START
-   ========================================================= */
+console.log(
+  "🚀 Starting Cozy Music..."
+);
 
-startGateway();
+console.log(
+  "Voice dependency report:"
+);
+
+try {
+  console.log(
+    generateDependencyReport()
+  );
+} catch (_) {}
+
+connectGateway();
+
+// ============================================================
+// SHUTDOWN
+// ============================================================
+
+function shutdown() {
+  console.log("");
+  console.log(
+    "🛑 Shutting down Cozy Music..."
+  );
+
+  if (heartbeatTimer) {
+    clearInterval(
+      heartbeatTimer
+    );
+  }
+
+  try {
+    if (audioPlayer) {
+      audioPlayer.stop();
+    }
+  } catch (_) {}
+
+  try {
+    if (voiceConnection) {
+      voiceConnection.destroy();
+    }
+  } catch (_) {}
+
+  try {
+    if (gateway) {
+      gateway.close();
+    }
+  } catch (_) {}
+
+  try {
+    server.close();
+  } catch (_) {}
+
+  process.exit(0);
+}
+
+process.on(
+  "SIGINT",
+  shutdown
+);
+
+process.on(
+  "SIGTERM",
+  shutdown
+);
