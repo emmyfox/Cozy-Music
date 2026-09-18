@@ -25,13 +25,11 @@ const {
 console.log("========================================");
 console.log("COZY MUSICAPP STARTING");
 console.log("========================================");
-
 console.log("Node.js:", process.version);
 
 function getPackageVersion(packageName) {
     try {
         const packageMain = require.resolve(packageName);
-
         const packageRoot = path.resolve(
             path.dirname(packageMain),
             ".."
@@ -43,14 +41,11 @@ function getPackageVersion(packageName) {
         );
 
         const packageJson = JSON.parse(
-            fs.readFileSync(
-                packageJsonPath,
-                "utf8"
-            )
+            fs.readFileSync(packageJsonPath, "utf8")
         );
 
         return packageJson.version;
-    } catch (error) {
+    } catch {
         return "unknown";
     }
 }
@@ -73,8 +68,6 @@ console.log(
 console.log("========================================");
 console.log("");
 
-const PORT = process.env.PORT || 10000;
-
 if (!process.env.DISCORD_TOKEN) {
     console.error("========================================");
     console.error("ERROR: DISCORD_TOKEN IS MISSING");
@@ -84,6 +77,8 @@ if (!process.env.DISCORD_TOKEN) {
 
 console.log("DISCORD_TOKEN found.");
 console.log("");
+
+const PORT = process.env.PORT || 10000;
 
 const app = express();
 
@@ -134,15 +129,60 @@ client.on("warn", (message) => {
 });
 
 client.on("debug", (message) => {
-    console.log("DISCORD DEBUG:", message);
+    let safeMessage = String(message);
+
+    safeMessage = safeMessage.replace(
+        /Provided token: .*/gi,
+        "Provided token: [REDACTED]"
+    );
+
+    safeMessage = safeMessage.replace(
+        /token=([^\s&]+)/gi,
+        "token=[REDACTED]"
+    );
+
+    console.log(
+        "DISCORD DEBUG:",
+        safeMessage
+    );
 });
 
-client.on("shardError", (error) => {
+client.on("shardError", (error, shardId) => {
     console.error("");
     console.error("========================================");
     console.error("DISCORD SHARD ERROR");
     console.error("========================================");
+    console.error("Shard:", shardId);
     console.error(error);
+});
+
+client.on("shardReconnecting", (shardId) => {
+    console.log("");
+    console.log("========================================");
+    console.log("DISCORD SHARD RECONNECTING");
+    console.log("========================================");
+    console.log("Shard:", shardId);
+});
+
+client.on("shardDisconnect", (event, shardId) => {
+    console.log("");
+    console.log("========================================");
+    console.log("DISCORD SHARD DISCONNECTED");
+    console.log("========================================");
+    console.log("Shard:", shardId);
+    console.log("Code:", event?.code);
+    console.log(
+        "Reason:",
+        event?.reason || "No reason supplied"
+    );
+});
+
+client.on("shardReady", (shardId) => {
+    console.log("");
+    console.log("========================================");
+    console.log("DISCORD SHARD READY");
+    console.log("========================================");
+    console.log("Shard:", shardId);
 });
 
 const commands = [
@@ -174,7 +214,10 @@ async function registerCommands() {
             }
         );
 
-        console.log("Slash command registered successfully.");
+        console.log(
+            "Slash command registered successfully."
+        );
+
         console.log("");
     } catch (error) {
         console.error("");
@@ -228,10 +271,7 @@ async function runBasicUDPTest() {
     try {
         await new Promise(
             (resolve, reject) => {
-                socket.once(
-                    "error",
-                    reject
-                );
+                socket.once("error", reject);
 
                 socket.bind(
                     0,
@@ -243,8 +283,7 @@ async function runBasicUDPTest() {
             }
         );
 
-        const address =
-            socket.address();
+        const address = socket.address();
 
         console.log(
             "UDP socket successfully created."
@@ -320,10 +359,6 @@ async function runBasicUDPTest() {
     try {
         socket.close();
     } catch {}
-
-    console.log(
-        "UDP diagnostic socket closed."
-    );
 }
 
 function getNetworkingState(connection) {
@@ -427,22 +462,21 @@ async function playMusic(interaction) {
             voiceChannel.guild.id
         );
 
-        connection =
-            joinVoiceChannel({
-                channelId:
-                    voiceChannel.id,
+        connection = joinVoiceChannel({
+            channelId:
+                voiceChannel.id,
 
-                guildId:
-                    voiceChannel.guild.id,
+            guildId:
+                voiceChannel.guild.id,
 
-                adapterCreator:
-                    voiceChannel.guild
-                        .voiceAdapterCreator,
+            adapterCreator:
+                voiceChannel.guild
+                    .voiceAdapterCreator,
 
-                selfDeaf: true,
-                selfMute: false,
-                debug: true
-            });
+            selfDeaf: true,
+            selfMute: false,
+            debug: true
+        });
 
         console.log(
             "Voice connection created."
@@ -475,9 +509,11 @@ async function playMusic(interaction) {
                     console.log(
                         "========================================"
                     );
+
                     console.log(
                         "DISCORD VOICE CONNECTION IS READY"
                     );
+
                     console.log(
                         "========================================"
                     );
@@ -915,6 +951,10 @@ process.on(
         console.error("");
         console.error(
             "UNCAUGHT EXCEPTION"
+        );
+
+        console.error(
+            "========================================"
         );
 
         console.error(error);
