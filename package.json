@@ -1,18 +1,14 @@
 {
   "name": "cozy-music-bot",
   "version": "1.0.0",
-  "description": "Discord local music bot",
+  "description": "Cozy Music Discord bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@discordjs/builders": "1.9.0",
-    "@discordjs/rest": "2.4.0",
-    "@discordjs/voice": "0.18.0",
-    "@discordjs/ws": "1.2.3",
-    "discord-api-types": "0.37.120",
-    "discord.js": "14.17.3",
+    "@discordjs/voice": "0.19.2",
+    "@snazzah/davey": "0.1.6",
     "dotenv": "16.4.7",
     "express": "4.21.2",
     "ffmpeg-static": "5.2.0",
