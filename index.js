@@ -221,7 +221,7 @@ client.on('interactionCreate', async interaction => {
         const audioPath = path.join(
             __dirname,
             'music',
-            'music.mp3'
+            'starlight.mp3.mp3'
         );
 
         console.log(
@@ -235,20 +235,20 @@ client.on('interactionCreate', async interaction => {
         if (!fs.existsSync(audioPath)) {
 
             console.error(
-                '❌ music.mp3 was not found!'
+                '❌ starlight.mp3.mp3 was not found!'
             );
 
             connection.destroy();
 
             await interaction.editReply(
-                '❌ I cannot find music/music.mp3. Make sure the file is inside the music folder on GitHub.'
+                '❌ I cannot find music/starlight.mp3.mp3. Make sure the file is inside the music folder on GitHub.'
             );
 
             return;
         }
 
         console.log(
-            '✅ music/music.mp3 found!'
+            '✅ music/starlight.mp3.mp3 found!'
         );
 
         // ==========================================
