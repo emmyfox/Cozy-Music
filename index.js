@@ -46,13 +46,10 @@ const API_BASE =
   "https://discord.com/api/v10";
 
 const INTENTS =
-  1 | 128; // GUILDS + GUILD_VOICE_STATES
+  1 | 128;
 
-// IMPORTANT:
-// Leave this FALSE.
-// The commands already exist in Discord.
-// Setting this to TRUE is only needed when we intentionally
-// want to update/register the slash commands.
+// Leave FALSE unless you intentionally want to
+// register/update the slash commands.
 const REGISTER_COMMANDS =
   process.env.REGISTER_COMMANDS === "true";
 
@@ -112,19 +109,28 @@ let musicFiles = [];
 function loadMusicFiles() {
   try {
     if (!fs.existsSync(MUSIC_FOLDER)) {
-      console.error("❌ Music folder does not exist:", MUSIC_FOLDER);
+      console.error(
+        "❌ Music folder does not exist:",
+        MUSIC_FOLDER
+      );
+
       return;
     }
 
     musicFiles = fs
       .readdirSync(MUSIC_FOLDER)
-      .filter(file => {
-        return file.toLowerCase().endsWith(".mp3");
-      })
-      .sort((a, b) => a.localeCompare(b));
+      .filter(file =>
+        file.toLowerCase().endsWith(".mp3")
+      )
+      .sort((a, b) =>
+        a.localeCompare(b)
+      );
 
     console.log("");
-    console.log("🎵 MUSIC FILES FOUND:", musicFiles.length);
+    console.log(
+      "🎵 MUSIC FILES FOUND:",
+      musicFiles.length
+    );
 
     for (const file of musicFiles) {
       console.log("   🎶", file);
@@ -132,7 +138,10 @@ function loadMusicFiles() {
 
     console.log("");
   } catch (error) {
-    console.error("❌ Could not read music folder:", error);
+    console.error(
+      "❌ Could not read music folder:",
+      error
+    );
   }
 }
 
@@ -144,9 +153,19 @@ loadMusicFiles();
 
 let audioPlayer = null;
 let voiceConnection = null;
+
 let currentSong = null;
-let queue = [];
-let currentSongIndex = 0;
+
+// This is the index of the song currently playing.
+let currentSongIndex = -1;
+
+// This prevents /stop from immediately starting
+// another song when the player becomes Idle.
+let musicPlaying = false;
+
+// This prevents multiple automatic next-song
+// calls from happening at the same time.
+let changingSong = false;
 
 // ============================================================
 // DISCORD GATEWAY STATE
@@ -173,12 +192,17 @@ let globalRateLimitedUntil = 0;
 // DISCORD REST REQUEST
 // ============================================================
 
-function discordRequest(method, endpoint, body = null) {
+function discordRequest(
+  method,
+  endpoint,
+  body = null
+) {
   return new Promise((resolve, reject) => {
     const now = Date.now();
 
     if (globalRateLimitedUntil > now) {
-      const waitMs = globalRateLimitedUntil - now;
+      const waitMs =
+        globalRateLimitedUntil - now;
 
       return reject(
         new Error(
@@ -189,126 +213,172 @@ function discordRequest(method, endpoint, body = null) {
       );
     }
 
-    const url = new URL(API_BASE + endpoint);
+    const url =
+      new URL(
+        API_BASE + endpoint
+      );
 
     const requestBody =
-      body !== null ? JSON.stringify(body) : null;
+      body !== null
+        ? JSON.stringify(body)
+        : null;
 
     const options = {
       hostname: url.hostname,
-      path: url.pathname + url.search,
+      path:
+        url.pathname +
+        url.search,
       method,
       headers: {
-        Authorization: `Bot ${TOKEN}`,
+        Authorization:
+          `Bot ${TOKEN}`,
         "User-Agent":
           "CozyMusicBot/1.0 DiscordBot",
-        Accept: "application/json"
+        Accept:
+          "application/json"
       }
     };
 
     if (requestBody !== null) {
-      options.headers["Content-Type"] =
-        "application/json";
+      options.headers[
+        "Content-Type"
+      ] = "application/json";
 
-      options.headers["Content-Length"] =
-        Buffer.byteLength(requestBody);
+      options.headers[
+        "Content-Length"
+      ] =
+        Buffer.byteLength(
+          requestBody
+        );
     }
 
-    const req = https.request(options, res => {
-      let data = "";
+    const req =
+      https.request(
+        options,
+        res => {
+          let data = "";
 
-      res.setEncoding("utf8");
+          res.setEncoding("utf8");
 
-      res.on("data", chunk => {
-        data += chunk;
-      });
-
-      res.on("end", () => {
-        const status = res.statusCode;
-
-        // ----------------------------------------------------
-        // RATE LIMITED
-        // ----------------------------------------------------
-
-        if (status === 429) {
-          let parsed = {};
-
-          try {
-            parsed = JSON.parse(data);
-          } catch (_) {}
-
-          let retryAfter =
-            Number(parsed.retry_after || 60);
-
-          if (!Number.isFinite(retryAfter)) {
-            retryAfter = 60;
-          }
-
-          // Add a little safety time.
-          retryAfter += 2;
-
-          globalRateLimitedUntil =
-            Date.now() + retryAfter * 1000;
-
-          console.error("");
-          console.error(
-            `⏳ Discord REST rate limit: waiting approximately ${retryAfter} seconds.`
+          res.on(
+            "data",
+            chunk => {
+              data += chunk;
+            }
           );
-          console.error("");
 
-          return reject(
-            new Error(
-              `Discord API 429: temporarily rate limited. Retry in ${retryAfter} seconds.`
-            )
+          res.on(
+            "end",
+            () => {
+              const status =
+                res.statusCode;
+
+              // ------------------------------------------------
+              // RATE LIMITED
+              // ------------------------------------------------
+
+              if (status === 429) {
+                let parsed = {};
+
+                try {
+                  parsed =
+                    JSON.parse(data);
+                } catch (_) {}
+
+                let retryAfter =
+                  Number(
+                    parsed.retry_after ||
+                    60
+                  );
+
+                if (
+                  !Number.isFinite(
+                    retryAfter
+                  )
+                ) {
+                  retryAfter = 60;
+                }
+
+                retryAfter += 2;
+
+                globalRateLimitedUntil =
+                  Date.now() +
+                  retryAfter * 1000;
+
+                console.error("");
+                console.error(
+                  `⏳ Discord REST rate limit: waiting approximately ${retryAfter} seconds.`
+                );
+                console.error("");
+
+                return reject(
+                  new Error(
+                    `Discord API 429: temporarily rate limited. Retry in ${retryAfter} seconds.`
+                  )
+                );
+              }
+
+              // ------------------------------------------------
+              // OTHER ERROR
+              // ------------------------------------------------
+
+              if (
+                status < 200 ||
+                status >= 300
+              ) {
+                return reject(
+                  new Error(
+                    `Discord API ${status}: ${data}`
+                  )
+                );
+              }
+
+              // ------------------------------------------------
+              // EMPTY RESPONSE
+              // ------------------------------------------------
+
+              if (!data) {
+                return resolve(null);
+              }
+
+              // ------------------------------------------------
+              // JSON RESPONSE
+              // ------------------------------------------------
+
+              try {
+                resolve(
+                  JSON.parse(data)
+                );
+              } catch (_) {
+                resolve(data);
+              }
+            }
           );
         }
-
-        // ----------------------------------------------------
-        // OTHER ERROR
-        // ----------------------------------------------------
-
-        if (status < 200 || status >= 300) {
-          return reject(
-            new Error(
-              `Discord API ${status}: ${data}`
-            )
-          );
-        }
-
-        // ----------------------------------------------------
-        // EMPTY RESPONSE
-        // ----------------------------------------------------
-
-        if (!data) {
-          return resolve(null);
-        }
-
-        // ----------------------------------------------------
-        // JSON RESPONSE
-        // ----------------------------------------------------
-
-        try {
-          resolve(JSON.parse(data));
-        } catch (_) {
-          resolve(data);
-        }
-      });
-    });
-
-    req.on("error", error => {
-      reject(error);
-    });
-
-    req.setTimeout(15000, () => {
-      req.destroy(
-        new Error(
-          "Discord API request timed out."
-        )
       );
-    });
+
+    req.on(
+      "error",
+      error => {
+        reject(error);
+      }
+    );
+
+    req.setTimeout(
+      15000,
+      () => {
+        req.destroy(
+          new Error(
+            "Discord API request timed out."
+          )
+        );
+      }
+    );
 
     if (requestBody !== null) {
-      req.write(requestBody);
+      req.write(
+        requestBody
+      );
     }
 
     req.end();
@@ -397,60 +467,78 @@ async function registerSlashCommands() {
       "ℹ️ Existing Discord commands will be used."
     );
     console.log("");
+
     return;
   }
 
   console.log("");
-  console.log("========================================");
-  console.log("REGISTERING SLASH COMMANDS");
-  console.log("========================================");
+  console.log(
+    "========================================"
+  );
+  console.log(
+    "REGISTERING SLASH COMMANDS"
+  );
+  console.log(
+    "========================================"
+  );
 
   const commands = [
     {
       name: "play",
-      description: "Play a cozy music track.",
+      description:
+        "Play a cozy music track.",
       options: [
         {
           name: "song",
-          description: "Choose a music track.",
+          description:
+            "Choose a music track.",
           type: 3,
           required: true,
-          choices: musicFiles
-            .slice(0, 25)
-            .map(file => ({
-              name:
-                file.length > 100
-                  ? file.substring(0, 100)
-                  : file,
-              value: file
-            }))
+          choices:
+            musicFiles
+              .slice(0, 25)
+              .map(file => ({
+                name:
+                  file.length > 100
+                    ? file.substring(
+                        0,
+                        100
+                      )
+                    : file,
+                value: file
+              }))
         }
       ]
     },
 
     {
       name: "stop",
-      description: "Stop the music."
+      description:
+        "Stop the music."
     },
 
     {
       name: "pause",
-      description: "Pause the music."
+      description:
+        "Pause the music."
     },
 
     {
       name: "resume",
-      description: "Resume the music."
+      description:
+        "Resume the music."
     },
 
     {
       name: "skip",
-      description: "Skip the current song."
+      description:
+        "Skip the current song."
     },
 
     {
       name: "queue",
-      description: "Show the music queue."
+      description:
+        "Show the music queue."
     }
   ];
 
@@ -469,12 +557,16 @@ async function registerSlashCommands() {
       "❌ Failed to register commands:"
     );
 
-    console.error(error.message);
+    console.error(
+      error.message
+    );
 
     console.error("");
+
     console.error(
       "The bot will continue running."
     );
+
     console.error("");
   }
 }
@@ -485,7 +577,8 @@ async function registerSlashCommands() {
 
 function createVoiceAdapterCreator() {
   return methods => {
-    voiceAdapterMethods = methods;
+    voiceAdapterMethods =
+      methods;
 
     console.log(
       "🔊 Voice adapter created."
@@ -495,7 +588,8 @@ function createVoiceAdapterCreator() {
       sendPayload(data) {
         if (
           !gateway ||
-          gateway.readyState !== WebSocket.OPEN
+          gateway.readyState !==
+            WebSocket.OPEN
         ) {
           console.error(
             "❌ Cannot send voice payload: Gateway is not open."
@@ -541,15 +635,28 @@ function createMusicPlayer() {
   audioPlayer =
     createAudioPlayer();
 
+  // ----------------------------------------------------------
+  // PLAYING
+  // ----------------------------------------------------------
+
   audioPlayer.on(
     AudioPlayerStatus.Playing,
     () => {
+      console.log("");
       console.log(
-        "▶️ Audio player is playing:",
+        "▶️ NOW PLAYING:",
         currentSong
       );
+      console.log(
+        `🎵 Track ${currentSongIndex + 1} of ${musicFiles.length}`
+      );
+      console.log("");
     }
   );
+
+  // ----------------------------------------------------------
+  // PAUSED
+  // ----------------------------------------------------------
 
   audioPlayer.on(
     AudioPlayerStatus.Paused,
@@ -560,18 +667,35 @@ function createMusicPlayer() {
     }
   );
 
+  // ----------------------------------------------------------
+  // IDLE = SONG FINISHED
+  // ----------------------------------------------------------
+
   audioPlayer.on(
     AudioPlayerStatus.Idle,
     () => {
       console.log(
-        "⏹️ Audio player is idle."
+        "⏹️ Current song finished."
       );
 
-      if (currentSong) {
-        playNextSong();
+      // If /stop was used, do NOT start
+      // another song.
+      if (!musicPlaying) {
+        console.log(
+          "🛑 Playlist is stopped."
+        );
+
+        return;
       }
+
+      // Automatically continue.
+      playNextSong();
     }
   );
+
+  // ----------------------------------------------------------
+  // AUDIO ERROR
+  // ----------------------------------------------------------
 
   audioPlayer.on(
     "error",
@@ -579,6 +703,14 @@ function createMusicPlayer() {
       console.error(
         "❌ Audio player error:",
         error.message
+      );
+
+      if (!musicPlaying) {
+        return;
+      }
+
+      console.log(
+        "⏭️ Skipping damaged/failed song..."
       );
 
       playNextSong();
@@ -612,18 +744,28 @@ async function connectToVoice() {
 
   voiceConnection =
     joinVoiceChannel({
-      channelId: VOICE_CHANNEL_ID,
-      guildId: GUILD_ID,
+      channelId:
+        VOICE_CHANNEL_ID,
+
+      guildId:
+        GUILD_ID,
+
       adapterCreator:
         createVoiceAdapterCreator(),
+
       selfDeaf: true,
+
       selfMute: false,
+
       daveEncryption: true
     });
 
   voiceConnection.on(
     "stateChange",
-    (oldState, newState) => {
+    (
+      oldState,
+      newState
+    ) => {
       console.log(
         `🔊 Voice state: ${oldState.status} -> ${newState.status}`
       );
@@ -684,7 +826,9 @@ async function connectToVoice() {
 // PLAY SONG
 // ============================================================
 
-async function playSong(fileName) {
+async function playSong(
+  fileName
+) {
   if (!fileName) {
     throw new Error(
       "No song was selected."
@@ -692,7 +836,9 @@ async function playSong(fileName) {
   }
 
   const safeName =
-    path.basename(fileName);
+    path.basename(
+      fileName
+    );
 
   const fullPath =
     path.join(
@@ -716,7 +862,19 @@ async function playSong(fileName) {
 
   createMusicPlayer();
 
-  currentSong = safeName;
+  // Find this song in the playlist.
+  const foundIndex =
+    musicFiles.indexOf(
+      safeName
+    );
+
+  if (foundIndex !== -1) {
+    currentSongIndex =
+      foundIndex;
+  }
+
+  currentSong =
+    safeName;
 
   const resource =
     createAudioResource(
@@ -727,7 +885,9 @@ async function playSong(fileName) {
       }
     );
 
-  audioPlayer.play(resource);
+  audioPlayer.play(
+    resource
+  );
 
   console.log(
     "✅ Audio resource started."
@@ -739,6 +899,14 @@ async function playSong(fileName) {
 // ============================================================
 
 async function playNextSong() {
+  if (changingSong) {
+    return;
+  }
+
+  if (!musicPlaying) {
+    return;
+  }
+
   if (!musicFiles.length) {
     console.log(
       "❌ No music files available."
@@ -747,26 +915,142 @@ async function playNextSong() {
     return;
   }
 
-  currentSongIndex++;
-
-  if (
-    currentSongIndex >=
-    musicFiles.length
-  ) {
-    currentSongIndex = 0;
-  }
-
-  const nextSong =
-    musicFiles[currentSongIndex];
+  changingSong = true;
 
   try {
-    await playSong(nextSong);
+    // Move to the next song.
+    currentSongIndex++;
+
+    // --------------------------------------------------------
+    // LOOP BACK TO FIRST SONG
+    // --------------------------------------------------------
+
+    if (
+      currentSongIndex >=
+      musicFiles.length
+    ) {
+      console.log("");
+      console.log(
+        "🔄 END OF PLAYLIST REACHED!"
+      );
+      console.log(
+        "🔄 LOOPING BACK TO SONG #1..."
+      );
+      console.log("");
+
+      currentSongIndex = 0;
+    }
+
+    const nextSong =
+      musicFiles[
+        currentSongIndex
+      ];
+
+    console.log("");
+    console.log(
+      "⏭️ AUTOMATICALLY STARTING NEXT SONG:"
+    );
+    console.log(
+      `🎵 ${nextSong}`
+    );
+    console.log(
+      `🎵 Track ${currentSongIndex + 1} of ${musicFiles.length}`
+    );
+    console.log("");
+
+    await playSong(
+      nextSong
+    );
   } catch (error) {
     console.error(
       "❌ Could not play next song:",
       error.message
     );
+
+    // If one file fails, try the following
+    // song instead of killing the playlist.
+    if (musicPlaying) {
+      setTimeout(
+        () => {
+          changingSong = false;
+          playNextSong();
+        },
+        1000
+      );
+
+      return;
+    }
   }
+
+  changingSong = false;
+}
+
+// ============================================================
+// START PLAYLIST
+// ============================================================
+
+async function startPlaylist(
+  fileName
+) {
+  if (!musicFiles.length) {
+    throw new Error(
+      "No music files were found."
+    );
+  }
+
+  const safeName =
+    path.basename(
+      fileName
+    );
+
+  const selectedIndex =
+    musicFiles.indexOf(
+      safeName
+    );
+
+  if (
+    selectedIndex === -1
+  ) {
+    throw new Error(
+      `Song not found in playlist: ${safeName}`
+    );
+  }
+
+  // Turn playlist mode ON.
+  musicPlaying = true;
+
+  // Set the selected song as the
+  // starting point.
+  currentSongIndex =
+    selectedIndex;
+
+  console.log("");
+  console.log(
+    "========================================"
+  );
+  console.log(
+    "🎵 STARTING COZY MUSIC PLAYLIST"
+  );
+  console.log(
+    "========================================"
+  );
+  console.log(
+    `🎵 Starting song: ${safeName}`
+  );
+  console.log(
+    `🎵 Track ${currentSongIndex + 1} of ${musicFiles.length}`
+  );
+  console.log(
+    "🔄 Automatic looping: ON"
+  );
+  console.log(
+    "========================================"
+  );
+  console.log("");
+
+  await playSong(
+    safeName
+  );
 }
 
 // ============================================================
@@ -774,12 +1058,19 @@ async function playNextSong() {
 // ============================================================
 
 function stopMusic() {
+  // Turn automatic playlist mode OFF
+  // BEFORE stopping the player.
+  musicPlaying = false;
+
+  changingSong = false;
+
   if (audioPlayer) {
     audioPlayer.stop();
   }
 
   currentSong = null;
-  queue = [];
+
+  currentSongIndex = -1;
 
   console.log(
     "⏹️ Music stopped."
@@ -816,10 +1107,23 @@ function resumeMusic() {
 
 async function skipMusic() {
   if (!audioPlayer) {
-    return;
+    return false;
   }
 
+  if (!musicPlaying) {
+    return false;
+  }
+
+  console.log(
+    "⏭️ Manual skip requested."
+  );
+
+  // Move to the next song immediately.
+  // We do NOT rely on Idle here because
+  // playNextSong() will directly start it.
   audioPlayer.stop();
+
+  return true;
 }
 
 // ============================================================
@@ -832,7 +1136,10 @@ function getQueueText() {
   }
 
   let text =
-    "🎵 **Cozy Music Library**\n\n";
+    "🎵 **Cozy Music Playlist**\n\n";
+
+  text +=
+    "🔄 **Automatic Loop: ON**\n\n";
 
   for (
     let i = 0;
@@ -840,11 +1147,18 @@ function getQueueText() {
     i++
   ) {
     const marker =
-      musicFiles[i] === currentSong
+      musicFiles[i] ===
+      currentSong
         ? "▶️"
         : "🎶";
 
-    text += `${marker} ${i + 1}. ${musicFiles[i]}\n`;
+    text +=
+      `${marker} ${i + 1}. ${musicFiles[i]}\n`;
+  }
+
+  if (currentSong) {
+    text +=
+      `\n🎵 Now playing: **${currentSong}**`;
   }
 
   return text;
@@ -871,11 +1185,13 @@ async function handleInteraction(
     `🎵 /${commandName} used`
   );
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // PLAY
-  // ----------------------------------------------------------
+  // ==========================================================
 
-  if (commandName === "play") {
+  if (
+    commandName === "play"
+  ) {
     const option =
       interaction.data?.options?.find(
         item =>
@@ -902,19 +1218,18 @@ async function handleInteraction(
     }
 
     try {
-      // Respond immediately so Discord knows
-      // the interaction was received.
       await deferInteraction(
         interaction
       );
 
-      await playSong(song);
+      await startPlaylist(
+        song
+      );
 
       await editInteractionResponse(
         interaction,
-        `🎵 Now playing **${song}**`
+        `🎵 Now playing **${song}**\n🔄 Automatic playlist loop is ON!`
       );
-
     } catch (error) {
       console.error(
         "❌ Error handling /play:"
@@ -929,7 +1244,9 @@ async function handleInteraction(
           interaction,
           `❌ ${error.message}`
         );
-      } catch (responseError) {
+      } catch (
+        responseError
+      ) {
         console.error(
           "❌ Could not send error response:",
           responseError.message
@@ -940,18 +1257,20 @@ async function handleInteraction(
     return;
   }
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // STOP
-  // ----------------------------------------------------------
+  // ==========================================================
 
-  if (commandName === "stop") {
+  if (
+    commandName === "stop"
+  ) {
     try {
+      stopMusic();
+
       await respondToInteraction(
         interaction,
         "⏹️ Music stopped."
       );
-
-      stopMusic();
     } catch (error) {
       console.error(
         "❌ /stop error:",
@@ -962,11 +1281,13 @@ async function handleInteraction(
     return;
   }
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // PAUSE
-  // ----------------------------------------------------------
+  // ==========================================================
 
-  if (commandName === "pause") {
+  if (
+    commandName === "pause"
+  ) {
     try {
       const success =
         pauseMusic();
@@ -987,11 +1308,13 @@ async function handleInteraction(
     return;
   }
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // RESUME
-  // ----------------------------------------------------------
+  // ==========================================================
 
-  if (commandName === "resume") {
+  if (
+    commandName === "resume"
+  ) {
     try {
       const success =
         resumeMusic();
@@ -1012,15 +1335,26 @@ async function handleInteraction(
     return;
   }
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // SKIP
-  // ----------------------------------------------------------
+  // ==========================================================
 
-  if (commandName === "skip") {
+  if (
+    commandName === "skip"
+  ) {
     try {
+      if (!musicPlaying) {
+        await respondToInteraction(
+          interaction,
+          "❌ Nothing is currently playing."
+        );
+
+        return;
+      }
+
       await respondToInteraction(
         interaction,
-        "⏭️ Skipping..."
+        "⏭️ Skipping to the next song..."
       );
 
       await skipMusic();
@@ -1034,11 +1368,13 @@ async function handleInteraction(
     return;
   }
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // QUEUE
-  // ----------------------------------------------------------
+  // ==========================================================
 
-  if (commandName === "queue") {
+  if (
+    commandName === "queue"
+  ) {
     try {
       await respondToInteraction(
         interaction,
@@ -1059,10 +1395,13 @@ async function handleInteraction(
 // GATEWAY SEND
 // ============================================================
 
-function gatewaySend(payload) {
+function gatewaySend(
+  payload
+) {
   if (
     !gateway ||
-    gateway.readyState !== WebSocket.OPEN
+    gateway.readyState !==
+      WebSocket.OPEN
   ) {
     console.error(
       "❌ Gateway is not open."
@@ -1080,7 +1419,9 @@ function gatewaySend(payload) {
 // HEARTBEAT
 // ============================================================
 
-function startHeartbeat(interval) {
+function startHeartbeat(
+  interval
+) {
   if (heartbeatTimer) {
     clearInterval(
       heartbeatTimer
@@ -1088,24 +1429,27 @@ function startHeartbeat(interval) {
   }
 
   heartbeatTimer =
-    setInterval(() => {
-      if (
-        !gateway ||
-        gateway.readyState !==
-          WebSocket.OPEN
-      ) {
-        return;
-      }
+    setInterval(
+      () => {
+        if (
+          !gateway ||
+          gateway.readyState !==
+            WebSocket.OPEN
+        ) {
+          return;
+        }
 
-      gatewaySend({
-        op: 1,
-        d: sequence
-      });
+        gatewaySend({
+          op: 1,
+          d: sequence
+        });
 
-      console.log(
-        "💓 Heartbeat sent."
-      );
-    }, interval);
+        console.log(
+          "💓 Heartbeat sent."
+        );
+      },
+      interval
+    );
 }
 
 // ============================================================
@@ -1161,14 +1505,17 @@ function connectGateway() {
         packet.s !== undefined &&
         packet.s !== null
       ) {
-        sequence = packet.s;
+        sequence =
+          packet.s;
       }
 
-      // ------------------------------------------------------
+      // ======================================================
       // HELLO
-      // ------------------------------------------------------
+      // ======================================================
 
-      if (packet.op === 10) {
+      if (
+        packet.op === 10
+      ) {
         console.log("");
         console.log(
           "========================================"
@@ -1181,7 +1528,8 @@ function connectGateway() {
         );
 
         const interval =
-          packet.d.heartbeat_interval;
+          packet.d
+            .heartbeat_interval;
 
         console.log(
           "Heartbeat interval:",
@@ -1197,11 +1545,16 @@ function connectGateway() {
           op: 2,
           d: {
             token: TOKEN,
-            intents: INTENTS,
+
+            intents:
+              INTENTS,
+
             properties: {
               os: "linux",
-              browser: "cozy-music",
-              device: "cozy-music"
+              browser:
+                "cozy-music",
+              device:
+                "cozy-music"
             }
           }
         });
@@ -1218,11 +1571,13 @@ function connectGateway() {
         return;
       }
 
-      // ------------------------------------------------------
+      // ======================================================
       // HEARTBEAT ACK
-      // ------------------------------------------------------
+      // ======================================================
 
-      if (packet.op === 11) {
+      if (
+        packet.op === 11
+      ) {
         console.log(
           "💓 Heartbeat ACK received."
         );
@@ -1230,11 +1585,13 @@ function connectGateway() {
         return;
       }
 
-      // ------------------------------------------------------
+      // ======================================================
       // INVALID SESSION
-      // ------------------------------------------------------
+      // ======================================================
 
-      if (packet.op === 9) {
+      if (
+        packet.op === 9
+      ) {
         console.error(
           "❌ Discord reported an invalid session."
         );
@@ -1247,11 +1604,13 @@ function connectGateway() {
         return;
       }
 
-      // ------------------------------------------------------
+      // ======================================================
       // DISPATCH
-      // ------------------------------------------------------
+      // ======================================================
 
-      if (packet.op !== 0) {
+      if (
+        packet.op !== 0
+      ) {
         return;
       }
 
@@ -1263,11 +1622,13 @@ function connectGateway() {
         event
       );
 
-      // ------------------------------------------------------
+      // ======================================================
       // READY
-      // ------------------------------------------------------
+      // ======================================================
 
-      if (event === "READY") {
+      if (
+        event === "READY"
+      ) {
         botUser =
           packet.d.user;
 
@@ -1295,7 +1656,8 @@ function connectGateway() {
         );
         console.log(
           "Guilds:",
-          packet.d.guilds?.length || 0
+          packet.d.guilds?.length ||
+            0
         );
         console.log("");
         console.log(
@@ -1303,16 +1665,14 @@ function connectGateway() {
         );
         console.log("");
 
-        // IMPORTANT:
-        // Commands are NOT registered automatically.
         await registerSlashCommands();
 
         return;
       }
 
-      // ------------------------------------------------------
+      // ======================================================
       // VOICE STATE UPDATE
-      // ------------------------------------------------------
+      // ======================================================
 
       if (
         event ===
@@ -1348,9 +1708,9 @@ function connectGateway() {
         return;
       }
 
-      // ------------------------------------------------------
+      // ======================================================
       // VOICE SERVER UPDATE
-      // ------------------------------------------------------
+      // ======================================================
 
       if (
         event ===
@@ -1378,9 +1738,9 @@ function connectGateway() {
         return;
       }
 
-      // ------------------------------------------------------
+      // ======================================================
       // INTERACTION
-      // ------------------------------------------------------
+      // ======================================================
 
       if (
         event ===
@@ -1395,9 +1755,16 @@ function connectGateway() {
     }
   );
 
+  // ==========================================================
+  // GATEWAY CLOSE
+  // ==========================================================
+
   gateway.on(
     "close",
-    (code, reason) => {
+    (
+      code,
+      reason
+    ) => {
       console.error("");
       console.error(
         "❌ Gateway WebSocket closed."
@@ -1408,7 +1775,8 @@ function connectGateway() {
       );
       console.error(
         "Reason:",
-        reason?.toString() || "none"
+        reason?.toString() ||
+          "none"
       );
       console.error("");
 
@@ -1417,7 +1785,8 @@ function connectGateway() {
           heartbeatTimer
         );
 
-        heartbeatTimer = null;
+        heartbeatTimer =
+          null;
       }
 
       setTimeout(
@@ -1426,6 +1795,10 @@ function connectGateway() {
       );
     }
   );
+
+  // ==========================================================
+  // GATEWAY ERROR
+  // ==========================================================
 
   gateway.on(
     "error",
@@ -1467,6 +1840,11 @@ function shutdown() {
   console.log(
     "🛑 Shutting down Cozy Music..."
   );
+
+  // Stop automatic playlist first.
+  musicPlaying = false;
+
+  changingSong = false;
 
   if (heartbeatTimer) {
     clearInterval(
