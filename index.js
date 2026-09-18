@@ -99,9 +99,10 @@ client.once('clientReady', async () => {
     } catch (error) {
 
         console.error(
-            '❌ Failed to register slash command:',
-            error
+            '❌ Failed to register slash command:'
         );
+
+        console.error(error);
     }
 });
 
@@ -111,7 +112,7 @@ client.once('clientReady', async () => {
 
 client.on('interactionCreate', async interaction => {
 
-    // Ignore anything that isn't a slash command
+    // Ignore non-slash commands
     if (!interaction.isChatInputCommand()) {
         return;
     }
@@ -153,6 +154,14 @@ client.on('interactionCreate', async interaction => {
             `🔊 Joining voice channel: ${voiceChannel.name}`
         );
 
+        console.log(
+            `🆔 Voice Channel ID: ${voiceChannel.id}`
+        );
+
+        console.log(
+            `🆔 Guild ID: ${voiceChannel.guild.id}`
+        );
+
         // ==========================================
         // JOIN VOICE
         // ==========================================
@@ -166,11 +175,31 @@ client.on('interactionCreate', async interaction => {
             adapterCreator:
                 voiceChannel.guild.voiceAdapterCreator,
 
-            selfDeaf: true
+            selfDeaf: true,
+
+            selfMute: false
         });
 
         console.log(
             '🔊 Voice connection created.'
+        );
+
+        console.log(
+            `📡 Initial voice state: ${connection.state.status}`
+        );
+
+        // ==========================================
+        // WATCH VOICE CONNECTION STATES
+        // ==========================================
+
+        connection.on(
+            'stateChange',
+            (oldState, newState) => {
+
+                console.log(
+                    `📡 Voice state: ${oldState.status} -> ${newState.status}`
+                );
+            }
         );
 
         // ==========================================
@@ -179,76 +208,67 @@ client.on('interactionCreate', async interaction => {
 
         try {
 
+            console.log(
+                '⏳ Waiting for Discord voice connection...'
+            );
+
             await entersState(
                 connection,
                 VoiceConnectionStatus.Ready,
-                15000
+                30000
             );
 
             console.log(
-                '✅ Discord voice connection is READY!'
+                '✅✅✅ DISCORD VOICE CONNECTION READY! ✅✅✅'
             );
 
         } catch (error) {
 
             console.error(
-                '❌ Voice connection did not become ready.'
+                '❌❌❌ VOICE CONNECTION FAILED ❌❌❌'
             );
 
-            console.error(error);
+            console.error(
+                'Current voice state:',
+                connection.state.status
+            );
+
+            console.error(
+                'Voice connection error:',
+                error
+            );
 
             connection.destroy();
 
             await interaction.editReply(
-                '❌ I joined the voice channel, but Discord did not establish the voice connection.'
+                '❌ Discord could not establish the voice connection. Check the Render logs for the voice state/error.'
             );
 
             return;
         }
 
         // ==========================================
-        // HANDLE VOICE DISCONNECT
+        // CREATE AUDIO PLAYER
         // ==========================================
 
-        connection.on(
-            VoiceConnectionStatus.Disconnected,
-            async () => {
+        console.log(
+            '🎵 Creating audio player...'
+        );
 
-                console.log(
-                    '⚠️ Voice connection disconnected.'
-                );
+        const player = createAudioPlayer();
 
-                try {
+        console.log(
+            '🎵 Audio player created.'
+        );
 
-                    await Promise.race([
+        // ==========================================
+        // SUBSCRIBE PLAYER
+        // ==========================================
 
-                        entersState(
-                            connection,
-                            VoiceConnectionStatus.Signalling,
-                            5000
-                        ),
+        connection.subscribe(player);
 
-                        entersState(
-                            connection,
-                            VoiceConnectionStatus.Connecting,
-                            5000
-                        )
-
-                    ]);
-
-                    console.log(
-                        '🔄 Voice connection recovering...'
-                    );
-
-                } catch {
-
-                    console.log(
-                        '❌ Voice connection could not recover.'
-                    );
-
-                    connection.destroy();
-                }
-            }
+        console.log(
+            '🔗 Audio player subscribed to voice connection.'
         );
 
         // ==========================================
@@ -278,7 +298,7 @@ client.on('interactionCreate', async interaction => {
             connection.destroy();
 
             await interaction.editReply(
-                '❌ I cannot find music/starlight.mp3.mp3. Make sure the file is inside the music folder on GitHub.'
+                '❌ I cannot find music/starlight.mp3.mp3.'
             );
 
             return;
@@ -314,27 +334,31 @@ client.on('interactionCreate', async interaction => {
         }
 
         // ==========================================
-        // CREATE AUDIO PLAYER
+        // CREATE AUDIO RESOURCE
         // ==========================================
 
-        const player = createAudioPlayer();
+        const createMusicResource = () => {
 
-        console.log(
-            '🎵 Audio player created.'
-        );
+            console.log(
+                '🎧 Creating audio resource...'
+            );
+
+            const resource = createAudioResource(
+                audioPath,
+                {
+                    inputType: StreamType.Arbitrary
+                }
+            );
+
+            console.log(
+                '✅ Audio resource created.'
+            );
+
+            return resource;
+        };
 
         // ==========================================
-        // SUBSCRIBE PLAYER TO VOICE CONNECTION
-        // ==========================================
-
-        connection.subscribe(player);
-
-        console.log(
-            '🔗 Audio player subscribed to voice connection.'
-        );
-
-        // ==========================================
-        // PLAY MUSIC FUNCTION
+        // PLAY MUSIC
         // ==========================================
 
         const playMusic = () => {
@@ -345,16 +369,8 @@ client.on('interactionCreate', async interaction => {
                     '▶️ Starting music...'
                 );
 
-                const resource = createAudioResource(
-                    audioPath,
-                    {
-                        inputType: StreamType.Arbitrary
-                    }
-                );
-
-                console.log(
-                    '🎧 Audio resource created.'
-                );
+                const resource =
+                    createMusicResource();
 
                 player.play(resource);
 
@@ -365,7 +381,7 @@ client.on('interactionCreate', async interaction => {
             } catch (error) {
 
                 console.error(
-                    '❌ Error starting music:'
+                    '❌❌❌ ERROR STARTING MUSIC ❌❌❌'
                 );
 
                 console.error(error);
@@ -373,7 +389,7 @@ client.on('interactionCreate', async interaction => {
         };
 
         // ==========================================
-        // AUDIO PLAYER STATE CHANGES
+        // AUDIO PLAYER STATE
         // ==========================================
 
         player.on(
@@ -410,30 +426,14 @@ client.on('interactionCreate', async interaction => {
                 ) {
 
                     console.log(
-                        '⏸️ Audio player was auto-paused.'
+                        '⏸️ Audio player auto-paused.'
                     );
                 }
             }
         );
 
         // ==========================================
-        // LOOP MUSIC
-        // ==========================================
-
-        player.on(
-            'idle',
-            () => {
-
-                console.log(
-                    '🔁 Music finished. Restarting...'
-                );
-
-                playMusic();
-            }
-        );
-
-        // ==========================================
-        // AUDIO ERRORS
+        // AUDIO PLAYER ERROR
         // ==========================================
 
         player.on(
@@ -459,6 +459,22 @@ client.on('interactionCreate', async interaction => {
         );
 
         // ==========================================
+        // LOOP MUSIC
+        // ==========================================
+
+        player.on(
+            'idle',
+            () => {
+
+                console.log(
+                    '🔁 Music finished. Restarting...'
+                );
+
+                playMusic();
+            }
+        );
+
+        // ==========================================
         // START MUSIC
         // ==========================================
 
@@ -475,14 +491,10 @@ client.on('interactionCreate', async interaction => {
     } catch (error) {
 
         console.error(
-            '❌ Error running /play:'
+            '❌❌❌ ERROR RUNNING /PLAY ❌❌❌'
         );
 
         console.error(error);
-
-        // ==========================================
-        // SAFELY RESPOND TO DISCORD
-        // ==========================================
 
         try {
 
@@ -522,7 +534,7 @@ client.on(
     error => {
 
         console.error(
-            '❌ Discord client error:'
+            '❌ DISCORD CLIENT ERROR'
         );
 
         console.error(error);
