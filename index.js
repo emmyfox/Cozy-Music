@@ -1,94 +1,80 @@
 require("dotenv").config();
 
 const express = require("express");
+const { Client, GatewayIntentBits } = require("discord.js");
 
 console.log("========================================");
-console.log("COZY MUSICAPP - PACKAGE DIAGNOSTIC");
+console.log("COZY MUSIC - DISCORD GATEWAY TEST");
 console.log("========================================");
 
 console.log("Node.js:", process.version);
 
-function getVersion(packageName) {
-    try {
-        const packageJson = require(`${packageName}/package.json`);
-        return packageJson.version;
-    } catch (error) {
-        return "Unable to read version";
-    }
+if (!process.env.DISCORD_TOKEN) {
+    console.error("❌ DISCORD_TOKEN is missing!");
+    process.exit(1);
 }
 
-console.log("");
-console.log("PACKAGE VERSIONS");
+console.log("✅ DISCORD_TOKEN found.");
+console.log("Token will NOT be printed.");
 console.log("----------------------------------------");
 
-console.log("discord.js:", getVersion("discord.js"));
-console.log("@discordjs/ws:", getVersion("@discordjs/ws"));
-console.log("@discordjs/rest:", getVersion("@discordjs/rest"));
-console.log("@discordjs/voice:", getVersion("@discordjs/voice"));
-console.log("ws:", getVersion("ws"));
-console.log("prism-media:", getVersion("prism-media"));
-console.log("opusscript:", getVersion("opusscript"));
+console.log("Creating Discord client...");
 
-console.log("");
-console.log("========================================");
-console.log("DEPENDENCY TEST");
-console.log("========================================");
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds
+    ]
+});
 
-try {
-    const Discord = require("discord.js");
+console.log("✅ Discord client created.");
 
-    console.log("✅ discord.js loaded successfully.");
+client.on("debug", (message) => {
+    console.log("DISCORD DEBUG:", message);
+});
 
-    if (Discord.Client) {
-        console.log("✅ discord.js Client available.");
-    }
-
-    if (Discord.GatewayIntentBits) {
-        console.log("✅ GatewayIntentBits available.");
-    }
-} catch (error) {
-    console.error("❌ discord.js failed to load.");
+client.on("error", (error) => {
+    console.error("❌ DISCORD CLIENT ERROR:");
     console.error(error);
-}
+});
 
-try {
-    const WS = require("@discordjs/ws");
+client.on("warn", (message) => {
+    console.warn("⚠️ DISCORD WARNING:", message);
+});
 
-    console.log("✅ @discordjs/ws loaded successfully.");
+client.on("ready", () => {
+    console.log("");
+    console.log("========================================");
+    console.log("🎉🎉🎉 DISCORD READY! 🎉🎉🎉");
+    console.log("========================================");
+    console.log("Bot username:", client.user.tag);
+    console.log("Bot ID:", client.user.id);
+    console.log("Guild count:", client.guilds.cache.size);
+    console.log("========================================");
+    console.log("✅ DISCORD.JS GATEWAY TEST PASSED!");
+    console.log("========================================");
+});
 
-    if (WS.WebSocketManager) {
-        console.log("✅ WebSocketManager available.");
-    }
-} catch (error) {
-    console.error("❌ @discordjs/ws failed to load.");
-    console.error(error);
-}
+client.on("shardReady", (id) => {
+    console.log("✅ Shard ready:", id);
+});
 
-try {
-    const REST = require("@discordjs/rest");
+console.log("Starting client.login()...");
+console.log("----------------------------------------");
 
-    console.log("✅ @discordjs/rest loaded successfully.");
-} catch (error) {
-    console.error("❌ @discordjs/rest failed to load.");
-    console.error(error);
-}
-
-
-// ========================================
-// EXPRESS
-// ========================================
+client.login(process.env.DISCORD_TOKEN)
+    .then(() => {
+        console.log("client.login() completed.");
+    })
+    .catch((error) => {
+        console.error("");
+        console.error("❌ LOGIN FAILED");
+        console.error(error);
+    });
 
 const app = express();
 
 app.get("/", (req, res) => {
-    res.send("Cozy MusicAPP package diagnostic is running.");
-});
-
-app.get("/health", (req, res) => {
-    res.json({
-        online: true,
-        diagnostic: "packages"
-    });
+    res.send("Cozy Music Gateway Test is running!");
 });
 
 const PORT = process.env.PORT || 10000;
@@ -99,7 +85,5 @@ app.listen(PORT, () => {
     console.log("WEB SERVER STARTED");
     console.log("========================================");
     console.log("Port:", PORT);
-    console.log("");
-    console.log("PACKAGE DIAGNOSTIC COMPLETE");
-    console.log("========================================");
+    console.log("Waiting for Discord Gateway...");
 });
