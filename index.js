@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const express = require("express");
+const https = require("https");
 const dns = require("dns");
 const dgram = require("dgram");
 const fs = require("fs");
@@ -30,6 +31,7 @@ console.log("Node.js:", process.version);
 function getPackageVersion(packageName) {
     try {
         const packageMain = require.resolve(packageName);
+
         const packageRoot = path.resolve(
             path.dirname(packageMain),
             ".."
@@ -41,7 +43,10 @@ function getPackageVersion(packageName) {
         );
 
         const packageJson = JSON.parse(
-            fs.readFileSync(packageJsonPath, "utf8")
+            fs.readFileSync(
+                packageJsonPath,
+                "utf8"
+            )
         );
 
         return packageJson.version;
@@ -101,130 +106,174 @@ app.listen(PORT, "0.0.0.0", () => {
     console.log("");
 });
 
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildVoiceStates
-    ]
-});
-
-console.log("Discord client created.");
-
-client.on("error", (error) => {
-    console.error("");
-    console.error("========================================");
-    console.error("DISCORD CLIENT ERROR");
-    console.error("========================================");
-    console.error(error);
-});
-
-client.on("warn", (message) => {
-    console.warn("");
-    console.warn("========================================");
-    console.warn("DISCORD CLIENT WARNING");
-    console.warn("========================================");
-    console.warn(message);
-});
-
-client.on("debug", (message) => {
-    let safeMessage = String(message);
-
-    safeMessage = safeMessage.replace(
-        /Provided token: .*/gi,
-        "Provided token: [REDACTED]"
-    );
-
-    safeMessage = safeMessage.replace(
-        /token=([^\s&]+)/gi,
-        "token=[REDACTED]"
-    );
+async function testDiscordHTTPS() {
+    console.log("");
+    console.log("========================================");
+    console.log("DISCORD HTTPS CONNECTIVITY TEST");
+    console.log("========================================");
 
     console.log(
-        "DISCORD DEBUG:",
-        safeMessage
+        "Testing https://discord.com/api/v10/gateway"
     );
-});
 
-client.on("shardError", (error, shardId) => {
-    console.error("");
-    console.error("========================================");
-    console.error("DISCORD SHARD ERROR");
-    console.error("========================================");
-    console.error("Shard:", shardId);
-    console.error(error);
-});
-
-client.on("shardReconnecting", (shardId) => {
-    console.log("");
-    console.log("========================================");
-    console.log("DISCORD SHARD RECONNECTING");
-    console.log("========================================");
-    console.log("Shard:", shardId);
-});
-
-client.on("shardDisconnect", (event, shardId) => {
-    console.log("");
-    console.log("========================================");
-    console.log("DISCORD SHARD DISCONNECTED");
-    console.log("========================================");
-    console.log("Shard:", shardId);
-    console.log("Code:", event?.code);
-    console.log(
-        "Reason:",
-        event?.reason || "No reason supplied"
-    );
-});
-
-client.on("shardReady", (shardId) => {
-    console.log("");
-    console.log("========================================");
-    console.log("DISCORD SHARD READY");
-    console.log("========================================");
-    console.log("Shard:", shardId);
-});
-
-const commands = [
-    new SlashCommandBuilder()
-        .setName("play")
-        .setDescription("Play Cozy Music")
-        .toJSON()
-];
-
-async function registerCommands() {
-    try {
-        console.log("");
-        console.log("========================================");
-        console.log("REGISTERING SLASH COMMAND");
-        console.log("========================================");
-
-        const rest = new REST({
-            version: "10"
-        }).setToken(
-            process.env.DISCORD_TOKEN
-        );
-
-        await rest.put(
-            Routes.applicationCommands(
-                client.user.id
-            ),
+    return new Promise((resolve) => {
+        const request = https.get(
+            "https://discord.com/api/v10/gateway",
             {
-                body: commands
+                timeout: 10000,
+                headers: {
+                    "User-Agent":
+                        "CozyMusicAPP/1.0"
+                }
+            },
+            (response) => {
+                console.log(
+                    "Discord HTTPS status:",
+                    response.statusCode
+                );
+
+                console.log(
+                    "Discord HTTPS connection succeeded."
+                );
+
+                let data = "";
+
+                response.on(
+                    "data",
+                    (chunk) => {
+                        data += chunk.toString();
+                    }
+                );
+
+                response.on(
+                    "end",
+                    () => {
+                        try {
+                            const result =
+                                JSON.parse(data);
+
+                            console.log(
+                                "Discord Gateway URL received:"
+                            );
+
+                            console.log(
+                                result.url
+                                    ? result.url
+                                    : "No URL returned"
+                            );
+                        } catch {
+                            console.log(
+                                "Discord response was received."
+                            );
+                        }
+
+                        console.log(
+                            "========================================"
+                        );
+                        console.log("");
+
+                        resolve(true);
+                    }
+                );
             }
         );
 
-        console.log(
-            "Slash command registered successfully."
+        request.on(
+            "timeout",
+            () => {
+                console.error(
+                    "Discord HTTPS request timed out."
+                );
+
+                request.destroy();
+
+                console.log(
+                    "========================================"
+                );
+                console.log("");
+
+                resolve(false);
+            }
         );
 
-        console.log("");
+        request.on(
+            "error",
+            (error) => {
+                console.error(
+                    "Discord HTTPS connection failed:"
+                );
+
+                console.error(
+                    error.message
+                );
+
+                console.log(
+                    "========================================"
+                );
+                console.log("");
+
+                resolve(false);
+            }
+        );
+    });
+}
+
+async function testDiscordDNS() {
+    console.log("");
+    console.log("========================================");
+    console.log("DISCORD DNS TEST");
+    console.log("========================================");
+
+    console.log(
+        "Resolving gateway.discord.gg..."
+    );
+
+    try {
+        const addresses =
+            await new Promise(
+                (resolve, reject) => {
+                    dns.resolve4(
+                        "gateway.discord.gg",
+                        (error, result) => {
+                            if (error) {
+                                reject(error);
+                            } else {
+                                resolve(result);
+                            }
+                        }
+                    );
+                }
+            );
+
+        console.log(
+            "gateway.discord.gg resolved successfully."
+        );
+
+        for (const address of addresses) {
+            console.log(
+                "   " + address
+            );
+        }
+
+        console.log(
+            "========================================"
+        );
+
+        return true;
     } catch (error) {
-        console.error("");
-        console.error("========================================");
-        console.error("SLASH COMMAND REGISTRATION FAILED");
-        console.error("========================================");
-        console.error(error);
+        console.error(
+            "Discord Gateway DNS failed:"
+        );
+
+        console.error(
+            error.message
+        );
+
+        console.log(
+            "========================================"
+        );
+
+        return false;
     }
 }
 
@@ -237,41 +286,56 @@ async function runBasicUDPTest() {
     console.log("Test 1: DNS resolution");
 
     try {
-        const addresses = await new Promise(
-            (resolve, reject) => {
-                dns.resolve4(
-                    "discord.com",
-                    (error, result) => {
-                        if (error) {
-                            reject(error);
-                        } else {
-                            resolve(result);
+        const addresses =
+            await new Promise(
+                (resolve, reject) => {
+                    dns.resolve4(
+                        "discord.com",
+                        (error, result) => {
+                            if (error) {
+                                reject(error);
+                            } else {
+                                resolve(result);
+                            }
                         }
-                    }
-                );
-            }
-        );
+                    );
+                }
+            );
 
         console.log("DNS works.");
-        console.log("discord.com IPv4 addresses:");
+
+        console.log(
+            "discord.com IPv4 addresses:"
+        );
 
         for (const address of addresses) {
-            console.log("   " + address);
+            console.log(
+                "   " + address
+            );
         }
     } catch (error) {
-        console.error("DNS failed:");
+        console.error(
+            "DNS failed:"
+        );
+
         console.error(error);
     }
 
     console.log("");
-    console.log("Test 2: Creating UDP socket");
+    console.log(
+        "Test 2: Creating UDP socket"
+    );
 
-    const socket = dgram.createSocket("udp4");
+    const socket =
+        dgram.createSocket("udp4");
 
     try {
         await new Promise(
             (resolve, reject) => {
-                socket.once("error", reject);
+                socket.once(
+                    "error",
+                    reject
+                );
 
                 socket.bind(
                     0,
@@ -283,7 +347,8 @@ async function runBasicUDPTest() {
             }
         );
 
-        const address = socket.address();
+        const address =
+            socket.address();
 
         console.log(
             "UDP socket successfully created."
@@ -313,12 +378,15 @@ async function runBasicUDPTest() {
     }
 
     console.log("");
-    console.log("Test 3: Sending generic UDP packet");
+    console.log(
+        "Test 3: Sending generic UDP packet"
+    );
 
     try {
-        const packet = Buffer.from(
-            "Cozy Music UDP test"
-        );
+        const packet =
+            Buffer.from(
+                "Cozy Music UDP test"
+            );
 
         await new Promise(
             (resolve, reject) => {
@@ -352,7 +420,9 @@ async function runBasicUDPTest() {
 
     console.log("");
     console.log("========================================");
-    console.log("BASIC UDP TEST COMPLETE");
+    console.log(
+        "BASIC UDP TEST COMPLETE"
+    );
     console.log("========================================");
     console.log("");
 
@@ -361,21 +431,262 @@ async function runBasicUDPTest() {
     } catch {}
 }
 
-function getNetworkingState(connection) {
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildVoiceStates
+    ]
+});
+
+console.log(
+    "Discord client created."
+);
+
+client.on(
+    "error",
+    (error) => {
+        console.error("");
+        console.error(
+            "========================================"
+        );
+
+        console.error(
+            "DISCORD CLIENT ERROR"
+        );
+
+        console.error(
+            "========================================"
+        );
+
+        console.error(error);
+    }
+);
+
+client.on(
+    "warn",
+    (message) => {
+        console.warn("");
+        console.warn(
+            "DISCORD CLIENT WARNING"
+        );
+
+        console.warn(message);
+    }
+);
+
+client.on(
+    "debug",
+    (message) => {
+        let safeMessage =
+            String(message);
+
+        safeMessage =
+            safeMessage.replace(
+                /Provided token: .*/gi,
+                "Provided token: [REDACTED]"
+            );
+
+        safeMessage =
+            safeMessage.replace(
+                /token=([^\s&]+)/gi,
+                "token=[REDACTED]"
+            );
+
+        console.log(
+            "DISCORD DEBUG:",
+            safeMessage
+        );
+    }
+);
+
+client.on(
+    "shardError",
+    (error, shardId) => {
+        console.error("");
+        console.error(
+            "========================================"
+        );
+
+        console.error(
+            "DISCORD SHARD ERROR"
+        );
+
+        console.error(
+            "========================================"
+        );
+
+        console.error(
+            "Shard:",
+            shardId
+        );
+
+        console.error(error);
+    }
+);
+
+client.on(
+    "shardReconnecting",
+    (shardId) => {
+        console.log("");
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "DISCORD SHARD RECONNECTING"
+        );
+
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "Shard:",
+            shardId
+        );
+    }
+);
+
+client.on(
+    "shardDisconnect",
+    (event, shardId) => {
+        console.log("");
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "DISCORD SHARD DISCONNECTED"
+        );
+
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "Shard:",
+            shardId
+        );
+
+        console.log(
+            "Code:",
+            event?.code
+        );
+
+        console.log(
+            "Reason:",
+            event?.reason ||
+                "No reason supplied"
+        );
+    }
+);
+
+client.on(
+    "shardReady",
+    (shardId) => {
+        console.log("");
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "DISCORD SHARD READY"
+        );
+
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "Shard:",
+            shardId
+        );
+    }
+);
+
+const commands = [
+    new SlashCommandBuilder()
+        .setName("play")
+        .setDescription(
+            "Play Cozy Music"
+        )
+        .toJSON()
+];
+
+async function registerCommands() {
     try {
-        if (!connection.state.networking) {
+        console.log("");
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "REGISTERING SLASH COMMAND"
+        );
+
+        console.log(
+            "========================================"
+        );
+
+        const rest =
+            new REST({
+                version: "10"
+            }).setToken(
+                process.env.DISCORD_TOKEN
+            );
+
+        await rest.put(
+            Routes.applicationCommands(
+                client.user.id
+            ),
+            {
+                body: commands
+            }
+        );
+
+        console.log(
+            "Slash command registered successfully."
+        );
+
+        console.log("");
+    } catch (error) {
+        console.error("");
+        console.error(
+            "SLASH COMMAND REGISTRATION FAILED"
+        );
+
+        console.error(error);
+    }
+}
+
+function getNetworkingState(
+    connection
+) {
+    try {
+        if (
+            !connection.state.networking
+        ) {
             return null;
         }
 
-        return connection.state.networking.state;
+        return (
+            connection.state.networking
+                .state
+        );
     } catch {
         return null;
     }
 }
 
-function logNetworkingState(connection) {
+function logNetworkingState(
+    connection
+) {
     const networking =
-        getNetworkingState(connection);
+        getNetworkingState(
+            connection
+        );
 
     if (!networking) {
         console.log(
@@ -405,14 +716,24 @@ function logNetworkingState(connection) {
     );
 }
 
-async function playMusic(interaction) {
+async function playMusic(
+    interaction
+) {
     let connection = null;
 
     try {
         console.log("");
-        console.log("========================================");
-        console.log("/play COMMAND RECEIVED");
-        console.log("========================================");
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "/play COMMAND RECEIVED"
+        );
+
+        console.log(
+            "========================================"
+        );
 
         console.log(
             "Used by:",
@@ -462,21 +783,22 @@ async function playMusic(interaction) {
             voiceChannel.guild.id
         );
 
-        connection = joinVoiceChannel({
-            channelId:
-                voiceChannel.id,
+        connection =
+            joinVoiceChannel({
+                channelId:
+                    voiceChannel.id,
 
-            guildId:
-                voiceChannel.guild.id,
+                guildId:
+                    voiceChannel.guild.id,
 
-            adapterCreator:
-                voiceChannel.guild
-                    .voiceAdapterCreator,
+                adapterCreator:
+                    voiceChannel.guild
+                        .voiceAdapterCreator,
 
-            selfDeaf: true,
-            selfMute: false,
-            debug: true
-        });
+                selfDeaf: true,
+                selfMute: false,
+                debug: true
+            });
 
         console.log(
             "Voice connection created."
@@ -489,7 +811,10 @@ async function playMusic(interaction) {
 
         connection.on(
             "stateChange",
-            (oldState, newState) => {
+            (
+                oldState,
+                newState
+            ) => {
                 console.log(
                     "Voice state:",
                     oldState.status,
@@ -557,15 +882,7 @@ async function playMusic(interaction) {
             (error) => {
                 console.error("");
                 console.error(
-                    "========================================"
-                );
-
-                console.error(
                     "VOICE CONNECTION ERROR"
-                );
-
-                console.error(
-                    "========================================"
                 );
 
                 console.error(error);
@@ -615,7 +932,6 @@ async function playMusic(interaction) {
                 networking &&
                 networking.code === 6
             ) {
-                console.log("");
                 console.log(
                     "Discord networking closed before UDP became ready."
                 );
@@ -635,15 +951,7 @@ async function playMusic(interaction) {
         if (!ready) {
             console.log("");
             console.log(
-                "========================================"
-            );
-
-            console.log(
                 "VOICE CONNECTION DID NOT REACH READY"
-            );
-
-            console.log(
-                "========================================"
             );
 
             console.log(
@@ -673,12 +981,8 @@ async function playMusic(interaction) {
                 "starlight.mp3.mp3"
             );
 
-        console.log("");
         console.log(
-            "Checking music file:"
-        );
-
-        console.log(
+            "Checking music file:",
             musicFile
         );
 
@@ -722,7 +1026,10 @@ async function playMusic(interaction) {
 
         player.on(
             "stateChange",
-            (oldState, newState) => {
+            (
+                oldState,
+                newState
+            ) => {
                 console.log(
                     "Audio player:",
                     oldState.status,
@@ -789,7 +1096,6 @@ async function playMusic(interaction) {
                 }
             }
         );
-
     } catch (error) {
         console.error("");
         console.error(
@@ -902,19 +1208,50 @@ client.on(
     }
 );
 
-console.log(
-    "Attempting Discord login..."
-);
+async function startDiscord() {
+    console.log("");
+    console.log(
+        "========================================"
+    );
 
-client.login(
-    process.env.DISCORD_TOKEN
-)
-    .then(() => {
+    console.log(
+        "TESTING DISCORD CONNECTION FIRST"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+    await testDiscordDNS();
+
+    await testDiscordHTTPS();
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "ATTEMPTING DISCORD LOGIN"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "Attempting Discord login..."
+    );
+
+    try {
+        await client.login(
+            process.env.DISCORD_TOKEN
+        );
+
         console.log(
             "Discord login request completed."
         );
-    })
-    .catch((error) => {
+    } catch (error) {
         console.error("");
         console.error(
             "========================================"
@@ -931,7 +1268,40 @@ client.login(
         console.error(error);
 
         process.exit(1);
-    });
+    }
+}
+
+startDiscord();
+
+setTimeout(
+    () => {
+        if (!client.isReady()) {
+            console.error("");
+            console.error(
+                "========================================"
+            );
+
+            console.error(
+                "DISCORD GATEWAY TIMEOUT"
+            );
+
+            console.error(
+                "========================================"
+            );
+
+            console.error(
+                "The bot has been waiting for Discord Gateway READY for 30 seconds."
+            );
+
+            console.error(
+                "The HTTP/DNS tests above should show where the connection is failing."
+            );
+
+            console.error("");
+        }
+    },
+    30000
+);
 
 process.on(
     "unhandledRejection",
@@ -951,10 +1321,6 @@ process.on(
         console.error("");
         console.error(
             "UNCAUGHT EXCEPTION"
-        );
-
-        console.error(
-            "========================================"
         );
 
         console.error(error);
