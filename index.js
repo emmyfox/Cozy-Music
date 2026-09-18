@@ -2,21 +2,16 @@ require("dotenv").config();
 
 const express = require("express");
 const {
-    Client,
-    GatewayIntentBits
-} = require("discord.js");
+    WebSocketManager,
+    WebSocketShardEvents,
+    WebSocketShard
+} = require("@discordjs/ws");
 
 console.log("========================================");
-console.log("COZY MUSICAPP - DISCORD.JS TEST");
+console.log("COZY MUSICAPP - @DISCORDJS/WS TEST");
 console.log("========================================");
 
 console.log("Node.js:", process.version);
-
-try {
-    console.log("discord.js:", require("discord.js").version);
-} catch {
-    console.log("discord.js version: unknown");
-}
 
 if (!process.env.DISCORD_TOKEN) {
     console.error("❌ DISCORD_TOKEN is missing.");
@@ -26,27 +21,9 @@ if (!process.env.DISCORD_TOKEN) {
 console.log("DISCORD_TOKEN found.");
 console.log("Token will NOT be printed.");
 
-console.log("========================================");
-console.log("CREATING DISCORD CLIENT");
-console.log("========================================");
-
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds
-    ],
-
-    ws: {
-        handshakeTimeout: 30000,
-        helloTimeout: 30000,
-        readyTimeout: 60000
-    }
-});
-
-console.log("Discord client created.");
-
 
 // ========================================
-// EXPRESS WEB SERVER
+// EXPRESS SERVER
 // ========================================
 
 const app = express();
@@ -58,20 +35,14 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
     res.json({
         online: true,
-        discordReady: client.isReady(),
-        bot: client.user
-            ? {
-                id: client.user.id,
-                username: client.user.username
-            }
-            : null,
-        guilds: client.guilds.cache.size
+        gatewayTest: "running"
     });
 });
 
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
+    console.log("");
     console.log("========================================");
     console.log("WEB SERVER STARTED");
     console.log("========================================");
@@ -80,96 +51,147 @@ app.listen(PORT, () => {
 
 
 // ========================================
-// DISCORD DEBUG EVENTS
-// ========================================
-
-client.on("debug", (message) => {
-    console.log("DISCORD DEBUG:", message);
-});
-
-client.on("warn", (message) => {
-    console.warn("DISCORD WARNING:", message);
-});
-
-client.on("error", (error) => {
-    console.error("DISCORD CLIENT ERROR:");
-    console.error(error);
-});
-
-client.on("shardConnecting", (id) => {
-    console.log("========================================");
-    console.log("DISCORD SHARD CONNECTING");
-    console.log("Shard:", id);
-    console.log("========================================");
-});
-
-client.on("shardReady", (id) => {
-    console.log("========================================");
-    console.log("DISCORD SHARD READY");
-    console.log("Shard:", id);
-    console.log("========================================");
-});
-
-client.on("shardDisconnect", (event, id) => {
-    console.log("========================================");
-    console.log("DISCORD SHARD DISCONNECTED");
-    console.log("Shard:", id);
-    console.log("Event:", event);
-    console.log("========================================");
-});
-
-client.on("shardReconnecting", (id) => {
-    console.log("========================================");
-    console.log("DISCORD SHARD RECONNECTING");
-    console.log("Shard:", id);
-    console.log("========================================");
-});
-
-
-// ========================================
-// READY
-// ========================================
-
-client.once("ready", () => {
-    console.log("");
-    console.log("========================================");
-    console.log("🎉 DISCORD.JS IS READY!");
-    console.log("========================================");
-
-    console.log("Bot username:", client.user.username);
-    console.log("Bot ID:", client.user.id);
-    console.log("Guild count:", client.guilds.cache.size);
-
-    client.guilds.cache.forEach((guild) => {
-        console.log("Guild:", guild.name);
-        console.log("Guild ID:", guild.id);
-    });
-
-    console.log("========================================");
-    console.log("GATEWAY TEST PASSED");
-    console.log("========================================");
-});
-
-
-// ========================================
-// LOGIN
+// DISCORD GATEWAY
 // ========================================
 
 console.log("");
 console.log("========================================");
-console.log("ATTEMPTING DISCORD LOGIN");
+console.log("@DISCORDJS/WS GATEWAY TEST");
 console.log("========================================");
 
-console.log("Calling client.login()...");
-console.log("Token will NOT be printed.");
+console.log("Creating WebSocketManager...");
 
-client.login(process.env.DISCORD_TOKEN)
+let manager;
+
+try {
+    manager = new WebSocketManager({
+        token: process.env.DISCORD_TOKEN,
+
+        intents:
+            (1 << 0) |   // Guilds
+            (1 << 9) |   // Guild Messages
+            (1 << 12),   // Message Content
+
+        version: 10,
+
+        totalShards: 1,
+
+        buildIdentifyPayload: (shardId) => {
+            console.log("");
+            console.log("========================================");
+            console.log("BUILDING IDENTIFY PAYLOAD");
+            console.log("========================================");
+
+            console.log("Shard:", shardId);
+            console.log("Intents:", 
+                (1 << 0) |
+                (1 << 9) |
+                (1 << 12)
+            );
+
+            return {
+                token: process.env.DISCORD_TOKEN,
+
+                intents:
+                    (1 << 0) |
+                    (1 << 9) |
+                    (1 << 12),
+
+                properties: {
+                    os: "linux",
+                    browser: "discord.js",
+                    device: "discord.js"
+                }
+            };
+        }
+    });
+
+    console.log("WebSocketManager created.");
+} catch (error) {
+    console.error("");
+    console.error("========================================");
+    console.error("❌ FAILED TO CREATE WEBSOCKET MANAGER");
+    console.error("========================================");
+    console.error(error);
+    process.exit(1);
+}
+
+
+// ========================================
+// EVENTS
+// ========================================
+
+manager.on(WebSocketShardEvents.Debug, (message) => {
+    console.log("WS DEBUG:", message);
+});
+
+manager.on(WebSocketShardEvents.Hello, (shardId, data) => {
+    console.log("");
+    console.log("========================================");
+    console.log("DISCORD HELLO RECEIVED");
+    console.log("========================================");
+
+    console.log("Shard:", shardId);
+    console.log("Heartbeat interval:", data.heartbeat_interval);
+});
+
+manager.on(WebSocketShardEvents.Ready, (shardId, data) => {
+    console.log("");
+    console.log("========================================");
+    console.log("🎉 DISCORD READY RECEIVED");
+    console.log("========================================");
+
+    console.log("Shard:", shardId);
+
+    if (data) {
+        console.log("Session ID:", data.session_id);
+        console.log("Guild count:", data.guilds ? data.guilds.length : 0);
+
+        if (data.user) {
+            console.log("Bot username:", data.user.username);
+            console.log("Bot ID:", data.user.id);
+        }
+    }
+
+    console.log("");
+    console.log("========================================");
+    console.log("✅ @DISCORDJS/WS TEST PASSED");
+    console.log("========================================");
+});
+
+manager.on(WebSocketShardEvents.Closed, (shardId, code) => {
+    console.log("");
+    console.log("========================================");
+    console.log("DISCORD WS CLOSED");
+    console.log("========================================");
+
+    console.log("Shard:", shardId);
+    console.log("Close code:", code);
+});
+
+manager.on(WebSocketShardEvents.Resumed, (shardId) => {
+    console.log("Discord session resumed. Shard:", shardId);
+});
+
+
+// ========================================
+// START
+// ========================================
+
+console.log("");
+console.log("========================================");
+console.log("STARTING WEBSOCKET MANAGER");
+console.log("========================================");
+
+manager.connect()
     .then(() => {
-        console.log("client.login() promise resolved.");
+        console.log("");
+        console.log("manager.connect() completed.");
     })
     .catch((error) => {
+        console.error("");
         console.error("========================================");
-        console.error("❌ DISCORD LOGIN FAILED");
+        console.error("❌ WEBSOCKET MANAGER FAILED");
         console.error("========================================");
         console.error(error);
     });
@@ -182,31 +204,15 @@ client.login(process.env.DISCORD_TOKEN)
 setTimeout(() => {
     console.log("");
     console.log("========================================");
-    console.log("60 SECOND DIAGNOSTIC");
+    console.log("60 SECOND @DISCORDJS/WS DIAGNOSTIC");
     console.log("========================================");
 
-    console.log("Client ready:", client.isReady());
+    console.log("If READY appeared above:");
+    console.log("✅ @discordjs/ws works.");
 
-    if (client.user) {
-        console.log("Bot username:", client.user.username);
-        console.log("Bot ID:", client.user.id);
-    } else {
-        console.log("Bot user: none");
-    }
-
-    console.log("Guild cache:", client.guilds.cache.size);
-
-    if (client.isReady()) {
-        console.log("");
-        console.log("✅ DISCORD.JS SUCCESSFULLY CONNECTED.");
-    } else {
-        console.log("");
-        console.log("❌ DISCORD.JS IS STILL NOT READY.");
-        console.log("");
-        console.log("Raw WebSocket IDENTIFY previously worked.");
-        console.log("This means the remaining problem is inside");
-        console.log("the discord.js Gateway connection layer.");
-    }
+    console.log("");
+    console.log("If this is still stuck before HELLO:");
+    console.log("❌ The problem is below discord.js itself.");
 
     console.log("========================================");
 }, 60000);
