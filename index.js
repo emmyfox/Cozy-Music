@@ -22,19 +22,21 @@ const {
 } = require('@discordjs/voice');
 
 // ==========================================
-// CHECK TOKEN
+// CHECK DISCORD TOKEN
 // ==========================================
 
 if (!process.env.DISCORD_TOKEN) {
     console.error('❌ DISCORD_TOKEN is missing!');
+    console.error('Add DISCORD_TOKEN to your Render Environment Variables.');
     process.exit(1);
 }
 
 // ==========================================
-// WEB SERVER
+// EXPRESS WEB SERVER
 // ==========================================
 
 const app = express();
+
 const PORT = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
@@ -63,8 +65,13 @@ const client = new Client({
 // ==========================================
 
 client.once('clientReady', async () => {
+
     console.log('🤖 COZY MUSIC BOT ONLINE');
     console.log(`👤 Logged in as ${client.user.tag}`);
+
+    // ==========================================
+    // REGISTER SLASH COMMANDS
+    // ==========================================
 
     const commands = [
         {
@@ -77,6 +84,7 @@ client.once('clientReady', async () => {
         .setToken(process.env.DISCORD_TOKEN);
 
     try {
+
         await rest.put(
             Routes.applicationCommands(client.user.id),
             {
@@ -85,269 +93,9 @@ client.once('clientReady', async () => {
         );
 
         console.log('✅ Slash commands registered.');
-    } catch (error) {
-        console.error(
-            '❌ Failed to register slash commands:',
-            error
-        );
-    }
-});
-
-// ==========================================
-// /PLAY COMMAND
-// ==========================================
-
-client.on('interactionCreate', async interaction => {
-
-    if (!interaction.isChatInputCommand()) {
-        return;
-    }
-
-    if (interaction.commandName !== 'play') {
-        return;
-    }
-
-    console.log(
-        `🎵 /play used by ${interaction.user.tag}`
-    );
-
-    try {
-
-        await interaction.deferReply();
-
-        // ==========================================
-        // CHECK VOICE CHANNEL
-        // ==========================================
-
-        const voiceChannel = interaction.member?.voice?.channel;
-
-        if (!voiceChannel) {
-            await interaction.editReply(
-                '❌ You need to be in a voice channel first!'
-            );
-
-            return;
-        }
-
-        console.log(
-            `🔊 Joining voice channel: ${voiceChannel.name}`
-        );
-
-        // ==========================================
-        // JOIN VOICE
-        // ==========================================
-
-        const connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: voiceChannel.guild.id,
-            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-            selfDeaf: true
-        });
-
-        console.log('🔊 Voice connection created.');
-
-        // ==========================================
-        // HANDLE DISCONNECT
-        // ==========================================
-
-        connection.on(
-            VoiceConnectionStatus.Disconnected,
-            async () => {
-
-                console.log(
-                    '⚠️ Voice connection disconnected.'
-                );
-
-                try {
-
-                    await Promise.race([
-                        entersState(
-                            connection,
-                            VoiceConnectionStatus.Signalling,
-                            5000
-                        ),
-                        entersState(
-                            connection,
-                            VoiceConnectionStatus.Connecting,
-                            5000
-                        )
-                    ]);
-
-                    console.log(
-                        '🔄 Voice connection recovering...'
-                    );
-
-                } catch {
-
-                    console.log(
-                        '❌ Voice connection could not recover.'
-                    );
-
-                    connection.destroy();
-                }
-            }
-        );
-
-        // ==========================================
-        // MUSIC FILE
-        // ==========================================
-
-        const audioPath = path.join(
-            __dirname,
-            'music.mp3'
-        );
-
-        console.log(
-            `🎧 Looking for music file: ${audioPath}`
-        );
-
-        // ==========================================
-        // CHECK MUSIC FILE
-        // ==========================================
-
-        if (!fs.existsSync(audioPath)) {
-
-            console.error(
-                '❌ music.mp3 was not found!'
-            );
-
-            connection.destroy();
-
-            await interaction.editReply(
-                '❌ I cannot find music.mp3. Make sure it is uploaded to GitHub in the SAME folder as index.js.'
-            );
-
-            return;
-        }
-
-        console.log('✅ music.mp3 found!');
-
-        // ==========================================
-        // AUDIO PLAYER
-        // ==========================================
-
-        const player = createAudioPlayer();
-
-        connection.subscribe(player);
-
-        console.log('🎵 Audio player created.');
-
-        // ==========================================
-        // PLAY MUSIC
-        // ==========================================
-
-        const playMusic = () => {
-
-            try {
-
-                console.log('▶️ Starting music...');
-
-                const resource = createAudioResource(
-                    audioPath,
-                    {
-                        inputType: StreamType.Arbitrary
-                    }
-                );
-
-                player.play(resource);
-
-            } catch (error) {
-
-                console.error(
-                    '❌ Error starting music:',
-                    error
-                );
-            }
-        };
-
-        // ==========================================
-        // LOOP MUSIC
-        // ==========================================
-
-        player.on('idle', () => {
-
-            console.log(
-                '🔁 Music finished. Restarting...'
-            );
-
-            playMusic();
-        });
-
-        // ==========================================
-        // AUDIO ERRORS
-        // ==========================================
-
-        player.on('error', error => {
-
-            console.error(
-                '❌ Audio player error:',
-                error
-            );
-        });
-
-        // ==========================================
-        // START
-        // ==========================================
-
-        playMusic();
-
-        await interaction.editReply(
-            '🎶 Cozy music stream started successfully!'
-        );
 
     } catch (error) {
 
         console.error(
-            '❌ Error running /play:',
-            error
-        );
-
-        try {
-
-            if (
-                interaction.deferred ||
-                interaction.replied
-            ) {
-
-                await interaction.editReply(
-                    '❌ Something went wrong starting the music.'
-                );
-
-            } else {
-
-                await interaction.reply(
-                    '❌ Something went wrong starting the music.'
-                );
-            }
-
-        } catch (replyError) {
-
-            console.error(
-                '❌ Could not send error reply:',
-                replyError
-            );
-        }
-    }
-});
-
-// ==========================================
-// DISCORD ERRORS
-// ==========================================
-
-client.on('error', error => {
-    console.error(
-        '❌ Discord client error:',
-        error
-    );
-});
-
-// ==========================================
-// LOGIN
-// ==========================================
-
-console.log('🔑 Logging into Discord...');
-
-client.login(
-    process.env.DISCORD_TOKEN
-);
+            '❌
 ```
