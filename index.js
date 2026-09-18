@@ -42,7 +42,7 @@ const client = new Client({
 });
 
 const GUILD_ID = process.env.GUILD_ID;
-const MUSIC_DIR = path.join(__dirname, 'music');
+const MUSIC_DIR = __dirname;
 
 // Ensure the local music directory exists
 if (!fs.existsSync(MUSIC_DIR)) {
