@@ -5,10 +5,10 @@ const ffmpeg = require('ffmpeg-static');
 process.env.FFMPEG_PATH = ffmpeg;
 
 // --------------------------------------------------
-// HARDCODED CREDENTIALS (Zero cloud dependency)
+// CONFIGURATION (Secure Environment Variable)
 // --------------------------------------------------
 
-const DISCORD_TOKEN = "MTU1MDMyMzYxMzcwODcxNDAyNA.Go-apy.QahwpHjrzl3VP-9_YjZaHIjYQVGmDnCYkm-hzQ";
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = "1316737145901285386";
 
 // --------------------------------------------------
