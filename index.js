@@ -14,7 +14,6 @@ console.log("========================================");
 
 console.log("Node.js:", process.version);
 console.log("discord.js:", require("discord.js").version);
-console.log("@discordjs/voice:", require("@discordjs/voice/package.json").version);
 
 if (!process.env.DISCORD_TOKEN) {
     console.error("❌ DISCORD_TOKEN is missing.");
@@ -62,6 +61,9 @@ client.on(Events.Error, (error) => {
     console.error("========================================");
     console.error("❌ DISCORD CLIENT ERROR");
     console.error("========================================");
+    console.error("Error name:", error?.name);
+    console.error("Error message:", error?.message);
+    console.error("Error code:", error?.code);
     console.error(error);
     console.error("========================================");
 });
@@ -83,6 +85,7 @@ client.on(Events.ShardReady, (id, unavailableGuilds) => {
     console.log("");
     console.log("========================================");
     console.log("🟢 SHARD READY");
+    console.log("========================================");
     console.log("Shard:", id);
     console.log("Unavailable guilds:", unavailableGuilds);
     console.log("========================================");
@@ -92,6 +95,7 @@ client.on(Events.ShardConnecting, (id) => {
     console.log("");
     console.log("========================================");
     console.log("🔵 SHARD CONNECTING");
+    console.log("========================================");
     console.log("Shard:", id);
     console.log("========================================");
 });
@@ -100,9 +104,13 @@ client.on(Events.ShardDisconnect, (event, id) => {
     console.log("");
     console.log("========================================");
     console.log("🔴 SHARD DISCONNECTED");
+    console.log("========================================");
     console.log("Shard:", id);
     console.log("Code:", event?.code);
-    console.log("Reason:", event?.reason?.toString?.() || "No reason");
+    console.log(
+        "Reason:",
+        event?.reason?.toString?.() || "No reason"
+    );
     console.log("========================================");
 });
 
@@ -110,13 +118,14 @@ client.on(Events.ShardReconnecting, (id) => {
     console.log("");
     console.log("========================================");
     console.log("🟡 SHARD RECONNECTING");
+    console.log("========================================");
     console.log("Shard:", id);
     console.log("========================================");
 });
 
 //
 // ---------------------------------------------------------
-// PATCH DISCORD WEBSOCKET DEBUGGING
+// DISCORD.JS LOGIN
 // ---------------------------------------------------------
 //
 
@@ -135,8 +144,18 @@ client.login(process.env.DISCORD_TOKEN)
         console.log("========================================");
         console.log("✅ client.login() RESOLVED");
         console.log("========================================");
-        console.log("Login result:", result ? "[TOKEN RETURNED]" : result);
-        console.log("Login took:", Date.now() - loginStart, "ms");
+
+        console.log(
+            "Login result:",
+            result ? "[TOKEN RETURNED]" : result
+        );
+
+        console.log(
+            "Login took:",
+            Date.now() - loginStart,
+            "ms"
+        );
+
         console.log("========================================");
     })
     .catch((error) => {
@@ -144,11 +163,14 @@ client.login(process.env.DISCORD_TOKEN)
         console.error("========================================");
         console.error("❌❌❌ client.login() FAILED ❌❌❌");
         console.error("========================================");
+
         console.error("Error name:", error?.name);
         console.error("Error message:", error?.message);
         console.error("Error code:", error?.code);
+
         console.error("Error stack:");
         console.error(error?.stack || error);
+
         console.error("========================================");
 
         process.exitCode = 1;
@@ -156,7 +178,7 @@ client.login(process.env.DISCORD_TOKEN)
 
 //
 // ---------------------------------------------------------
-// LOGIN TIMEOUT
+// 60 SECOND LOGIN CHECK
 // ---------------------------------------------------------
 //
 
@@ -169,16 +191,24 @@ setTimeout(() => {
     if (client.isReady()) {
         console.log("✅ Client is already READY.");
         console.log("Logged in as:", client.user?.tag);
+        console.log("Guild count:", client.guilds.cache.size);
     } else {
         console.log("❌ Client is NOT READY after 60 seconds.");
         console.log("");
-        console.log("This means discord.js is still stuck during");
-        console.log("the Gateway connection/identify process.");
+        console.log(
+            "discord.js is still stuck during the Gateway connection."
+        );
         console.log("");
         console.log("Client status:");
         console.log("isReady:", client.isReady());
-        console.log("user:", client.user?.tag || "none");
-        console.log("guild cache:", client.guilds.cache.size);
+        console.log(
+            "user:",
+            client.user?.tag || "none"
+        );
+        console.log(
+            "guild cache:",
+            client.guilds.cache.size
+        );
     }
 
     console.log("========================================");
@@ -186,7 +216,7 @@ setTimeout(() => {
 
 //
 // ---------------------------------------------------------
-// SIMPLE RENDER WEB SERVER
+// RENDER WEB SERVER
 // ---------------------------------------------------------
 //
 
@@ -197,7 +227,9 @@ const server = http.createServer((req, res) => {
         "Content-Type": "text/plain"
     });
 
-    res.end("Cozy Music Discord diagnostic is running.\n");
+    res.end(
+        "Cozy Music Discord diagnostic is running.\n"
+    );
 });
 
 server.listen(PORT, "0.0.0.0", () => {
