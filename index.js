@@ -1,10 +1,10 @@
 require("dotenv").config();
 
 const express = require("express");
+const { REST } = require("@discordjs/rest");
 const {
     WebSocketManager,
-    WebSocketShardEvents,
-    WebSocketShard
+    WebSocketShardEvents
 } = require("@discordjs/ws");
 
 console.log("========================================");
@@ -51,15 +51,31 @@ app.listen(PORT, () => {
 
 
 // ========================================
-// DISCORD GATEWAY
+// DISCORD REST MANAGER
 // ========================================
 
 console.log("");
 console.log("========================================");
-console.log("@DISCORDJS/WS GATEWAY TEST");
+console.log("CREATING DISCORD REST MANAGER");
 console.log("========================================");
 
-console.log("Creating WebSocketManager...");
+const rest = new REST({
+    version: "10"
+});
+
+rest.setToken(process.env.DISCORD_TOKEN);
+
+console.log("REST manager created.");
+
+
+// ========================================
+// DISCORD WEBSOCKET MANAGER
+// ========================================
+
+console.log("");
+console.log("========================================");
+console.log("CREATING @DISCORDJS/WS MANAGER");
+console.log("========================================");
 
 let manager;
 
@@ -76,6 +92,8 @@ try {
 
         totalShards: 1,
 
+        rest,
+
         buildIdentifyPayload: (shardId) => {
             console.log("");
             console.log("========================================");
@@ -83,19 +101,18 @@ try {
             console.log("========================================");
 
             console.log("Shard:", shardId);
-            console.log("Intents:", 
+
+            const intents =
                 (1 << 0) |
                 (1 << 9) |
-                (1 << 12)
-            );
+                (1 << 12);
+
+            console.log("Intents:", intents);
 
             return {
                 token: process.env.DISCORD_TOKEN,
 
-                intents:
-                    (1 << 0) |
-                    (1 << 9) |
-                    (1 << 12),
+                intents,
 
                 properties: {
                     os: "linux",
@@ -118,22 +135,34 @@ try {
 
 
 // ========================================
-// EVENTS
+// DEBUG EVENTS
 // ========================================
 
 manager.on(WebSocketShardEvents.Debug, (message) => {
     console.log("WS DEBUG:", message);
 });
 
+
+// ========================================
+// HELLO
+// ========================================
+
 manager.on(WebSocketShardEvents.Hello, (shardId, data) => {
     console.log("");
     console.log("========================================");
-    console.log("DISCORD HELLO RECEIVED");
+    console.log("📡 DISCORD HELLO RECEIVED");
     console.log("========================================");
 
     console.log("Shard:", shardId);
     console.log("Heartbeat interval:", data.heartbeat_interval);
+
+    console.log("Discord Gateway WebSocket is working.");
 });
+
+
+// ========================================
+// READY
+// ========================================
 
 manager.on(WebSocketShardEvents.Ready, (shardId, data) => {
     console.log("");
@@ -144,8 +173,11 @@ manager.on(WebSocketShardEvents.Ready, (shardId, data) => {
     console.log("Shard:", shardId);
 
     if (data) {
-        console.log("Session ID:", data.session_id);
-        console.log("Guild count:", data.guilds ? data.guilds.length : 0);
+        console.log("Session ID received:", !!data.session_id);
+
+        if (data.guilds) {
+            console.log("Guild count:", data.guilds.length);
+        }
 
         if (data.user) {
             console.log("Bot username:", data.user.username);
@@ -159,6 +191,22 @@ manager.on(WebSocketShardEvents.Ready, (shardId, data) => {
     console.log("========================================");
 });
 
+
+// ========================================
+// RESUMED
+// ========================================
+
+manager.on(WebSocketShardEvents.Resumed, (shardId) => {
+    console.log("");
+    console.log("Discord session resumed.");
+    console.log("Shard:", shardId);
+});
+
+
+// ========================================
+// CLOSED
+// ========================================
+
 manager.on(WebSocketShardEvents.Closed, (shardId, code) => {
     console.log("");
     console.log("========================================");
@@ -169,13 +217,9 @@ manager.on(WebSocketShardEvents.Closed, (shardId, code) => {
     console.log("Close code:", code);
 });
 
-manager.on(WebSocketShardEvents.Resumed, (shardId) => {
-    console.log("Discord session resumed. Shard:", shardId);
-});
-
 
 // ========================================
-// START
+// START CONNECTION
 // ========================================
 
 console.log("");
@@ -204,7 +248,7 @@ manager.connect()
 setTimeout(() => {
     console.log("");
     console.log("========================================");
-    console.log("60 SECOND @DISCORDJS/WS DIAGNOSTIC");
+    console.log("60 SECOND DIAGNOSTIC");
     console.log("========================================");
 
     console.log("If READY appeared above:");
@@ -212,7 +256,7 @@ setTimeout(() => {
 
     console.log("");
     console.log("If this is still stuck before HELLO:");
-    console.log("❌ The problem is below discord.js itself.");
+    console.log("❌ @discordjs/ws is also having a Gateway problem.");
 
     console.log("========================================");
 }, 60000);
