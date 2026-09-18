@@ -1,294 +1,210 @@
 require("dotenv").config();
 
-const dns = require("dns");
-const WebSocket = require("ws");
+const {
+    Client,
+    GatewayIntentBits,
+    Events
+} = require("discord.js");
+
+const http = require("http");
 
 console.log("========================================");
-console.log("COZY MUSIC - DIRECT GATEWAY TEST");
+console.log("COZY MUSIC - DISCORD.JS GATEWAY DIAGNOSTIC");
 console.log("========================================");
 
 console.log("Node.js:", process.version);
+console.log("discord.js:", require("discord.js").version);
+console.log("@discordjs/voice:", require("@discordjs/voice/package.json").version);
 
 if (!process.env.DISCORD_TOKEN) {
-    console.error("ERROR: DISCORD_TOKEN is missing.");
+    console.error("❌ DISCORD_TOKEN is missing.");
     process.exit(1);
 }
 
 console.log("DISCORD_TOKEN found.");
-console.log("");
+console.log("Token length:", process.env.DISCORD_TOKEN.length);
+console.log("Token prefix:", process.env.DISCORD_TOKEN.substring(0, 5) + "...");
 
 console.log("========================================");
-console.log("TEST 1 - DISCORD GATEWAY DNS");
+console.log("CREATING DISCORD CLIENT");
 console.log("========================================");
 
-dns.resolve4(
-    "gateway.discord.gg",
-    (error, addresses) => {
-        if (error) {
-            console.error(
-                "DNS ERROR:",
-                error.message
-            );
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
+});
 
-            process.exit(1);
-        }
+console.log("Discord client created.");
 
-        console.log(
-            "gateway.discord.gg resolved successfully."
-        );
+//
+// ---------------------------------------------------------
+// DISCORD EVENTS
+// ---------------------------------------------------------
+//
 
-        for (const address of addresses) {
-            console.log(
-                "   " + address
-            );
-        }
+client.on(Events.ClientReady, (readyClient) => {
+    console.log("");
+    console.log("========================================");
+    console.log("🎉🎉🎉 DISCORD CLIENT READY 🎉🎉🎉");
+    console.log("========================================");
+    console.log("Logged in as:", readyClient.user.tag);
+    console.log("User ID:", readyClient.user.id);
+    console.log("Guild count:", readyClient.guilds.cache.size);
+    console.log("========================================");
+});
 
-        startWebSocketTest();
+client.on(Events.Error, (error) => {
+    console.error("");
+    console.error("========================================");
+    console.error("❌ DISCORD CLIENT ERROR");
+    console.error("========================================");
+    console.error(error);
+    console.error("========================================");
+});
+
+client.on(Events.Warn, (warning) => {
+    console.warn("");
+    console.warn("========================================");
+    console.warn("⚠️ DISCORD WARNING");
+    console.warn("========================================");
+    console.warn(warning);
+    console.warn("========================================");
+});
+
+client.on(Events.Debug, (message) => {
+    console.log("DISCORD DEBUG:", message);
+});
+
+client.on(Events.ShardReady, (id, unavailableGuilds) => {
+    console.log("");
+    console.log("========================================");
+    console.log("🟢 SHARD READY");
+    console.log("Shard:", id);
+    console.log("Unavailable guilds:", unavailableGuilds);
+    console.log("========================================");
+});
+
+client.on(Events.ShardConnecting, (id) => {
+    console.log("");
+    console.log("========================================");
+    console.log("🔵 SHARD CONNECTING");
+    console.log("Shard:", id);
+    console.log("========================================");
+});
+
+client.on(Events.ShardDisconnect, (event, id) => {
+    console.log("");
+    console.log("========================================");
+    console.log("🔴 SHARD DISCONNECTED");
+    console.log("Shard:", id);
+    console.log("Code:", event?.code);
+    console.log("Reason:", event?.reason?.toString?.() || "No reason");
+    console.log("========================================");
+});
+
+client.on(Events.ShardReconnecting, (id) => {
+    console.log("");
+    console.log("========================================");
+    console.log("🟡 SHARD RECONNECTING");
+    console.log("Shard:", id);
+    console.log("========================================");
+});
+
+//
+// ---------------------------------------------------------
+// PATCH DISCORD WEBSOCKET DEBUGGING
+// ---------------------------------------------------------
+//
+
+console.log("========================================");
+console.log("STARTING DISCORD.JS LOGIN");
+console.log("========================================");
+
+console.log("Attempting client.login()...");
+console.log("The token itself will NOT be printed.");
+
+const loginStart = Date.now();
+
+client.login(process.env.DISCORD_TOKEN)
+    .then((result) => {
+        console.log("");
+        console.log("========================================");
+        console.log("✅ client.login() RESOLVED");
+        console.log("========================================");
+        console.log("Login result:", result ? "[TOKEN RETURNED]" : result);
+        console.log("Login took:", Date.now() - loginStart, "ms");
+        console.log("========================================");
+    })
+    .catch((error) => {
+        console.error("");
+        console.error("========================================");
+        console.error("❌❌❌ client.login() FAILED ❌❌❌");
+        console.error("========================================");
+        console.error("Error name:", error?.name);
+        console.error("Error message:", error?.message);
+        console.error("Error code:", error?.code);
+        console.error("Error stack:");
+        console.error(error?.stack || error);
+        console.error("========================================");
+
+        process.exitCode = 1;
+    });
+
+//
+// ---------------------------------------------------------
+// LOGIN TIMEOUT
+// ---------------------------------------------------------
+//
+
+setTimeout(() => {
+    console.log("");
+    console.log("========================================");
+    console.log("⏰ 60 SECOND LOGIN DIAGNOSTIC");
+    console.log("========================================");
+
+    if (client.isReady()) {
+        console.log("✅ Client is already READY.");
+        console.log("Logged in as:", client.user?.tag);
+    } else {
+        console.log("❌ Client is NOT READY after 60 seconds.");
+        console.log("");
+        console.log("This means discord.js is still stuck during");
+        console.log("the Gateway connection/identify process.");
+        console.log("");
+        console.log("Client status:");
+        console.log("isReady:", client.isReady());
+        console.log("user:", client.user?.tag || "none");
+        console.log("guild cache:", client.guilds.cache.size);
     }
-);
 
-function startWebSocketTest() {
+    console.log("========================================");
+}, 60000);
+
+//
+// ---------------------------------------------------------
+// SIMPLE RENDER WEB SERVER
+// ---------------------------------------------------------
+//
+
+const PORT = process.env.PORT || 10000;
+
+const server = http.createServer((req, res) => {
+    res.writeHead(200, {
+        "Content-Type": "text/plain"
+    });
+
+    res.end("Cozy Music Discord diagnostic is running.\n");
+});
+
+server.listen(PORT, "0.0.0.0", () => {
     console.log("");
     console.log("========================================");
-    console.log("TEST 2 - DIRECT DISCORD WEBSOCKET");
+    console.log("WEB SERVER STARTED");
     console.log("========================================");
-
-    const gatewayURL =
-        "wss://gateway.discord.gg/?v=10&encoding=json";
-
-    console.log(
-        "Connecting to:",
-        gatewayURL
-    );
-
-    console.log("");
-    console.log(
-        "Waiting for Discord Gateway..."
-    );
-
-    let finished = false;
-
-    const socket =
-        new WebSocket(
-            gatewayURL,
-            {
-                handshakeTimeout: 15000
-            }
-        );
-
-    const timeout =
-        setTimeout(
-            () => {
-                if (finished) {
-                    return;
-                }
-
-                console.error("");
-                console.error(
-                    "========================================"
-                );
-
-                console.error(
-                    "WEBSOCKET TIMEOUT"
-                );
-
-                console.error(
-                    "========================================"
-                );
-
-                console.error(
-                    "Render connected to DNS, but the direct WebSocket connection did not finish within 15 seconds."
-                );
-
-                finished = true;
-
-                try {
-                    socket.close();
-                } catch {}
-
-                process.exit(1);
-            },
-            20000
-        );
-
-    socket.on(
-        "open",
-        () => {
-            console.log("");
-            console.log(
-                "========================================"
-            );
-
-            console.log(
-                "WEBSOCKET CONNECTED"
-            );
-
-            console.log(
-                "========================================"
-            );
-
-            console.log(
-                "Render successfully opened a WebSocket connection to Discord."
-            );
-
-            console.log("");
-            console.log(
-                "Waiting for Discord HELLO..."
-            );
-        }
-    );
-
-    socket.on(
-        "message",
-        (data) => {
-            try {
-                const packet =
-                    JSON.parse(
-                        data.toString()
-                    );
-
-                console.log("");
-                console.log(
-                    "DISCORD GATEWAY PACKET RECEIVED"
-                );
-
-                console.log(
-                    "Opcode:",
-                    packet.op
-                );
-
-                if (packet.op === 10) {
-                    console.log(
-                        "SUCCESS: Discord sent HELLO."
-                    );
-
-                    console.log(
-                        "Heartbeat interval:",
-                        packet.d?.heartbeat_interval,
-                        "ms"
-                    );
-
-                    console.log("");
-                    console.log(
-                        "========================================"
-                    );
-
-                    console.log(
-                        "DIRECT WEBSOCKET TEST PASSED"
-                    );
-
-                    console.log(
-                        "========================================"
-                    );
-
-                    console.log(
-                        "Render can connect to the Discord Gateway."
-                    );
-
-                    console.log(
-                        "The problem is therefore happening inside the bot login/handshake after the WebSocket connection."
-                    );
-
-                    finished = true;
-
-                    clearTimeout(timeout);
-
-                    try {
-                        socket.close();
-                    } catch {}
-
-                    setTimeout(
-                        () => {
-                            process.exit(0);
-                        },
-                        1000
-                    );
-                } else {
-                    console.log(
-                        "Gateway packet data received."
-                    );
-                }
-            } catch (error) {
-                console.error(
-                    "Could not read Gateway packet:"
-                );
-
-                console.error(
-                    error.message
-                );
-            }
-        }
-    );
-
-    socket.on(
-        "error",
-        (error) => {
-            if (finished) {
-                return;
-            }
-
-            console.error("");
-            console.error(
-                "========================================"
-            );
-
-            console.error(
-                "WEBSOCKET ERROR"
-            );
-
-            console.error(
-                "========================================"
-            );
-
-            console.error(
-                error.message
-            );
-
-            finished = true;
-
-            clearTimeout(timeout);
-
-            process.exit(1);
-        }
-    );
-
-    socket.on(
-        "close",
-        (code, reason) => {
-            if (finished) {
-                return;
-            }
-
-            console.error("");
-            console.error(
-                "========================================"
-            );
-
-            console.error(
-                "WEBSOCKET CLOSED"
-            );
-
-            console.error(
-                "========================================"
-            );
-
-            console.error(
-                "Close code:",
-                code
-            );
-
-            console.error(
-                "Reason:",
-                reason
-                    ? reason.toString()
-                    : "No reason supplied"
-            );
-
-            finished = true;
-
-            clearTimeout(timeout);
-
-            process.exit(1);
-        }
-    );
-}
+    console.log("Port:", PORT);
+    console.log("========================================");
+});
