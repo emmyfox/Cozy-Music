@@ -1,54 +1,23 @@
+const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnectionStatus, StreamType } = require('@discordjs/voice');
+const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const ffmpeg = require('ffmpeg-static');
 
-process.env.FFMPEG_PATH = ffmpeg;
+// Force IPv4 for UDP voice connections on cloud platforms like Render
+process.env.IPV4_ONLY = 'true';
 
-// --------------------------------------------------
-// CONFIGURATION (Secure Environment Variable)
-// --------------------------------------------------
-
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const GUILD_ID = "1316737145901285386";
-
-// --------------------------------------------------
-// WEB SERVER (Express for Fly.io health checks)
-// --------------------------------------------------
-
-const express = require('express');
 const app = express();
+const PORT = process.env.PORT || 10000;
 
-const PORT = process.env.PORT || 8080;
-
+// Express health check server for Render 24/7 uptime
 app.get('/', (req, res) => {
-    res.send('🎵 Cozy Music Bot is alive!');
+    res.send('Cozy Music Bot is alive and streaming!');
 });
 
 app.listen(PORT, () => {
     console.log(`🌐 Web server running on port ${PORT}`);
 });
-
-// --------------------------------------------------
-// DISCORD CLIENT & INTENTS
-// --------------------------------------------------
-
-const {
-    Client,
-    GatewayIntentBits,
-    REST,
-    Routes,
-    SlashCommandBuilder
-} = require('discord.js');
-
-const {
-    joinVoiceChannel,
-    createAudioPlayer,
-    createAudioResource,
-    AudioPlayerStatus,
-    NoSubscriberBehavior,
-    VoiceConnectionStatus,
-    entersState
-} = require('@discordjs/voice');
 
 const client = new Client({
     intents: [
@@ -58,153 +27,90 @@ const client = new Client({
     ]
 });
 
-// --------------------------------------------------
-// MUSIC FOLDER & STATE
-// --------------------------------------------------
+client.once('ready', async () => {
+    console.log(`🤖 COZY MUSIC BOT ONLINE`);
 
-const MUSIC_DIR = path.join(__dirname, 'music');
-const music = new Map();
+    // Register slash commands
+    const commands = [
+        {
+            name: 'play',
+            description: 'Start streaming cozy music in your voice channel',
+        }
+    ];
 
-const commands = [
-    new SlashCommandBuilder().setName('play').setDescription('Start the music'),
-    new SlashCommandBuilder().setName('skip').setDescription('Skip the current song'),
-    new SlashCommandBuilder().setName('pause').setDescription('Pause the music'),
-    new SlashCommandBuilder().setName('resume').setDescription('Resume the music'),
-    new SlashCommandBuilder().setName('stop').setDescription('Stop the music')
-].map(command => command.toJSON());
-
-function getMusicFiles() {
-    if (!fs.existsSync(MUSIC_DIR)) {
-        fs.mkdirSync(MUSIC_DIR, { recursive: true });
-    }
-    return fs.readdirSync(MUSIC_DIR)
-        .filter(file => ['.mp3', '.wav', '.ogg', '.flac', '.m4a'].includes(path.extname(file).toLowerCase()))
-        .sort()
-        .map(file => path.join(MUSIC_DIR, file));
-}
-
-async function playNext(guildId) {
-    const data = music.get(guildId);
-    if (!data || data.stopped) return;
-
-    if (data.queue.length === 0) {
-        data.queue = getMusicFiles();
-        if (data.queue.length === 0) return;
-    }
-
-    const filePath = data.queue.shift();
-    data.currentTrack = path.basename(filePath);
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
     try {
-        const resource = createAudioResource(filePath, { inlineVolume: true });
-        resource.volume.setVolume(1.0);
-        data.player.play(resource);
-    } catch (error) {
-        await playNext(guildId);
-    }
-}
-
-async function createMusicPlayer(guildId, channel) {
-    const connection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: guildId,
-        adapterCreator: channel.guild.voiceAdapterCreator,
-        selfDeaf: false,
-        selfMute: false,
-        addressType: 'ipv4'
-    });
-
-    await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
-
-    const player = createAudioPlayer({
-        behaviors: { noSubscriber: NoSubscriberBehavior.Play }
-    });
-
-    connection.subscribe(player);
-
-    const data = { connection, player, queue: [], currentTrack: null, stopped: false };
-    music.set(guildId, data);
-
-    player.on(AudioPlayerStatus.Idle, () => {
-        playNext(guildId).catch(console.error);
-    });
-
-    return data;
-}
-
-client.once('clientReady', async () => {
-    console.log('🤖 COZY MUSIC BOT ONLINE');
-    const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-    try {
-        await rest.put(Routes.applicationGuildCommands(client.user.id, GUILD_ID), { body: commands });
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands },
+        );
         console.log('✅ Slash commands registered.');
     } catch (error) {
-        console.error('❌ Command registration error:', error);
+        console.error('Failed to register slash commands:', error);
     }
 });
 
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand() || !interaction.guild) return;
-
-    const guildId = interaction.guild.id;
+    if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === 'play') {
-        await interaction.deferReply();
-        const channel = interaction.member?.voice?.channel;
+        const member = interaction.member;
+        const voiceChannel = member?.voice?.channel;
 
-        if (!channel) {
-            return interaction.editReply({ content: '❌ Join a voice channel first!' });
+        if (!voiceChannel) {
+            return interaction.reply({ content: '❌ You need to be in a voice channel first!', ephemeral: true });
         }
+
+        await interaction.deferReply();
 
         try {
-            let data = music.get(guildId);
-            if (!data) data = await createMusicPlayer(guildId, channel);
+            const connection = joinVoiceChannel({
+                channelId: voiceChannel.id,
+                guildId: voiceChannel.guild.id,
+                adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+                selfDeaf: true,
+            });
 
-            data.stopped = false;
-            if (data.queue.length === 0) data.queue = getMusicFiles();
-            if (data.queue.length === 0) return interaction.editReply('❌ No music files found.');
+            // Handle connection failures and cleanup
+            connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                try {
+                    await Promise.race([
+                        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+                        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                    ]);
+                } catch (error) {
+                    connection.destroy();
+                }
+            });
 
-            if (data.player.state.status === AudioPlayerStatus.Idle) {
-                await playNext(guildId);
+            // Point to your audio file or stream source
+            const audioPath = path.join(__dirname, 'music.mp3'); // Make sure your audio file is in the project directory
+            
+            if (fs.existsSync(audioPath)) {
+                const player = createAudioPlayer();
+                const resource = createAudioResource(audioPath, { inputType: StreamType.Arbitrary });
+                
+                connection.subscribe(player);
+                player.play(resource);
+
+                // Loop audio continuously
+                player.on('idle', () => {
+                    try {
+                        const loopingResource = createAudioResource(audioPath, { inputType: StreamType.Arbitrary });
+                        player.play(loopingResource);
+                    } catch (err) {
+                        console.error('Error looping audio:', err);
+                    }
+                });
             }
 
-            await interaction.editReply(`🎶 Music started in **${channel.name}**! Loop active.`);
+            await interaction.editReply('🎶 Cozy music stream started successfully!');
         } catch (error) {
-            await interaction.editReply(`❌ Could not start music: ${error.message}`);
+            console.error('Voice connection error:', error);
+            await interaction.editReply('❌ Could not start music: The operation was aborted');
         }
-    }
-
-    if (interaction.commandName === 'skip') {
-        const data = music.get(guildId);
-        if (!data) return interaction.reply({ content: '❌ Nothing playing.', ephemeral: true });
-        data.player.stop();
-        await interaction.reply(`⏭️ Skipped **${data.currentTrack || 'song'}**.`);
-    }
-
-    if (interaction.commandName === 'pause') {
-        const data = music.get(guildId);
-        if (!data) return interaction.reply({ content: '❌ Nothing playing.', ephemeral: true });
-        data.player.pause();
-        await interaction.reply('⏸️ Paused.');
-    }
-
-    if (interaction.commandName === 'resume') {
-        const data = music.get(guildId);
-        if (!data) return interaction.reply({ content: '❌ Nothing playing.', ephemeral: true });
-        data.player.unpause();
-        await interaction.reply('▶️ Resumed.');
-    }
-
-    if (interaction.commandName === 'stop') {
-        const data = music.get(guildId);
-        if (!data) return interaction.reply({ content: '❌ Nothing playing.', ephemeral: true });
-        data.stopped = true;
-        data.player.stop();
-        data.connection.destroy();
-        music.delete(guildId);
-        await interaction.reply('⏹️ Stopped and left channel.');
     }
 });
 
-console.log('🔑 Logging into Discord...');
-client.login(DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN);
