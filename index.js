@@ -112,7 +112,7 @@ client.once('clientReady', async () => {
 
 client.on('interactionCreate', async interaction => {
 
-    // Ignore non-slash commands
+    // Ignore anything that isn't a slash command
     if (!interaction.isChatInputCommand()) {
         return;
     }
@@ -177,7 +177,11 @@ client.on('interactionCreate', async interaction => {
 
             selfDeaf: true,
 
-            selfMute: false
+            selfMute: false,
+
+            // IMPORTANT:
+            // Turn on voice debugging.
+            debug: true
         });
 
         console.log(
@@ -189,7 +193,7 @@ client.on('interactionCreate', async interaction => {
         );
 
         // ==========================================
-        // WATCH VOICE CONNECTION STATES
+        // VOICE CONNECTION STATE CHANGES
         // ==========================================
 
         connection.on(
@@ -198,6 +202,78 @@ client.on('interactionCreate', async interaction => {
 
                 console.log(
                     `📡 Voice state: ${oldState.status} -> ${newState.status}`
+                );
+
+                // ======================================
+                // LOG NETWORKING STATE
+                // ======================================
+
+                if (newState.networking) {
+
+                    console.log(
+                        `🌐 Networking state: ${newState.networking.state.code}`
+                    );
+
+                    const networking =
+                        newState.networking;
+
+                    networking.on(
+                        'debug',
+                        message => {
+
+                            console.log(
+                                `🌐 VOICE DEBUG: ${message}`
+                            );
+                        }
+                    );
+
+                    networking.on(
+                        'error',
+                        error => {
+
+                            console.error(
+                                '❌❌❌ VOICE NETWORK ERROR ❌❌❌'
+                            );
+
+                            console.error(error);
+
+                            console.error(
+                                'Network error message:',
+                                error.message
+                            );
+
+                            console.error(
+                                'Network error stack:',
+                                error.stack
+                            );
+                        }
+                    );
+                }
+            }
+        );
+
+        // ==========================================
+        // VOICE CONNECTION ERROR
+        // ==========================================
+
+        connection.on(
+            'error',
+            error => {
+
+                console.error(
+                    '❌❌❌ VOICE CONNECTION ERROR ❌❌❌'
+                );
+
+                console.error(error);
+
+                console.error(
+                    'Voice error message:',
+                    error.message
+                );
+
+                console.error(
+                    'Voice error stack:',
+                    error.stack
                 );
             }
         );
@@ -229,8 +305,7 @@ client.on('interactionCreate', async interaction => {
             );
 
             console.error(
-                'Current voice state:',
-                connection.state.status
+                `Current voice state: ${connection.state.status}`
             );
 
             console.error(
@@ -238,10 +313,18 @@ client.on('interactionCreate', async interaction => {
                 error
             );
 
+            if (connection.state.networking) {
+
+                console.error(
+                    'Final networking state:',
+                    connection.state.networking.state.code
+                );
+            }
+
             connection.destroy();
 
             await interaction.editReply(
-                '❌ Discord could not establish the voice connection. Check the Render logs for the voice state/error.'
+                '❌ Discord could not establish the voice connection. Check the Render logs for the detailed voice/network error.'
             );
 
             return;
