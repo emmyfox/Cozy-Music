@@ -4,6 +4,8 @@ require("dotenv").config();
 const express = require("express");
 const dns = require("dns");
 const dgram = require("dgram");
+const fs = require("fs");
+const path = require("path");
 
 const {
     Client,
@@ -18,12 +20,8 @@ const {
     createAudioPlayer,
     createAudioResource,
     AudioPlayerStatus,
-    VoiceConnectionStatus,
-    entersState
+    VoiceConnectionStatus
 } = require("@discordjs/voice");
-
-const fs = require("fs");
-const path = require("path");
 
 // ============================================================
 // PACKAGE / RUNTIME INFORMATION
@@ -66,7 +64,7 @@ console.log("========================================");
 console.log("");
 
 // ============================================================
-// BASIC CONFIGURATION
+// ENVIRONMENT
 // ============================================================
 
 const PORT = process.env.PORT || 10000;
@@ -77,46 +75,10 @@ if (!process.env.DISCORD_TOKEN) {
 }
 
 // ============================================================
-// EXPRESS SERVER
+// EXPRESS WEB SERVER
 // ============================================================
 
 const app = express();
 
-app.get("/", (req, res) => {
-    res.send("Cozy MusicAPP is online 🎵");
-});
-
-app.get("/health", (req, res) => {
-    res.json({
-        status: "online",
-        node: process.version
-    });
-});
-
-app.listen(PORT, "0.0.0.0", () => {
-    console.log("========================================");
-    console.log("🌐 WEB SERVER STARTED");
-    console.log("========================================");
-    console.log(`🌐 Port: ${PORT}`);
-    console.log("");
-});
-
-// ============================================================
-// DISCORD CLIENT
-// ============================================================
-
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildVoiceStates
-    ]
-});
-
-// ============================================================
-// SLASH COMMAND
-// ============================================================
-
-cons
+app.get("/
 ```
