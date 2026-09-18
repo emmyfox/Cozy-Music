@@ -3,6 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const dns = require("dns");
 const dgram = require("dgram");
+const path = require("path");
+const fs = require("fs");
 
 const {
   Client,
@@ -21,11 +23,8 @@ const {
   entersState
 } = require("@discordjs/voice");
 
-const path = require("path");
-const fs = require("fs");
-
 // ============================================================
-// BASIC SETTINGS
+// SETTINGS
 // ============================================================
 
 const PORT = process.env.PORT || 10000;
@@ -72,7 +71,7 @@ const client = new Client({
 });
 
 // ============================================================
-// DISCORD SLASH COMMAND
+// SLASH COMMAND
 // ============================================================
 
 const commands = [
@@ -82,7 +81,7 @@ const commands = [
 ].map(command => command.toJSON());
 
 // ============================================================
-// REGISTER SLASH COMMAND
+// REGISTER COMMAND
 // ============================================================
 
 async function registerCommands() {
@@ -134,7 +133,7 @@ async function runUDPDiagnostic() {
   }
 
   // ----------------------------------------------------------
-  // TEST 2 - CREATE UDP SOCKET
+  // TEST 2 - UDP SOCKET
   // ----------------------------------------------------------
 
   console.log("");
@@ -177,7 +176,7 @@ async function runUDPDiagnostic() {
   }
 
   // ----------------------------------------------------------
-  // TEST 3 - SEND UDP PACKET
+  // TEST 3 - SEND UDP
   // ----------------------------------------------------------
 
   console.log("");
@@ -204,8 +203,8 @@ async function runUDPDiagnostic() {
 
     console.log("✅ UDP packet was successfully handed to Node.");
     console.log("📡 Destination: discord.com:443");
-    console.log("ℹ️ This confirms Node can create/send UDP traffic.");
-    console.log("ℹ️ It does NOT mean Discord Voice UDP is fully established.");
+    console.log("ℹ️ Node can create and send UDP traffic.");
+    console.log("ℹ️ This does NOT prove Discord Voice UDP is working.");
   } catch (error) {
     console.error("❌ UDP SEND FAILED");
     console.error("Error:", error.message);
@@ -227,7 +226,7 @@ async function runUDPDiagnostic() {
 }
 
 // ============================================================
-// DISCORD READY
+// BOT READY
 // ============================================================
 
 client.once("ready", async () => {
@@ -236,12 +235,12 @@ client.once("ready", async () => {
 
   await registerCommands();
 
-  // Run UDP test once when the bot starts.
+  // Run UDP test once at startup.
   await runUDPDiagnostic();
 });
 
 // ============================================================
-// /PLAY COMMAND
+// /PLAY
 // ============================================================
 
 client.on("interactionCreate", async interaction => {
@@ -255,16 +254,31 @@ client.on("interactionCreate", async interaction => {
 
   console.log(`🎵 /play used by ${interaction.user.tag}`);
 
-  // ----------------------------------------------------------
+  // ==========================================================
+  // IMPORTANT:
+  // ACKNOWLEDGE DISCORD IMMEDIATELY
+  // ==========================================================
+
+  try {
+    await interaction.deferReply();
+
+    console.log("✅ Discord interaction acknowledged.");
+  } catch (error) {
+    console.error("❌ Could not acknowledge Discord interaction.");
+    console.error(error);
+    return;
+  }
+
+  // ==========================================================
   // CHECK VOICE CHANNEL
-  // ----------------------------------------------------------
+  // ==========================================================
 
   const member = interaction.member;
 
   if (!member || !member.voice || !member.voice.channel) {
-    await interaction.reply({
-      content: "❌ You need to join a voice channel first!"
-    });
+    await interaction.editReply(
+      "❌ You need to join a voice channel first!"
+    );
 
     return;
   }
@@ -275,9 +289,9 @@ client.on("interactionCreate", async interaction => {
   console.log(`🆔 Voice Channel ID: ${voiceChannel.id}`);
   console.log(`🆔 Guild ID: ${voiceChannel.guild.id}`);
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // JOIN VOICE
-  // ----------------------------------------------------------
+  // ==========================================================
 
   let connection;
 
@@ -294,10 +308,12 @@ client.on("interactionCreate", async interaction => {
     });
 
     console.log("🔊 Voice connection created.");
-    console.log(`📡 Initial voice state: ${connection.state.status}`);
+    console.log(
+      `📡 Initial voice state: ${connection.state.status}`
+    );
 
     // --------------------------------------------------------
-    // VOICE CONNECTION STATE LOGGING
+    // VOICE STATE LOGGING
     // --------------------------------------------------------
 
     connection.on("stateChange", (oldState, newState) => {
@@ -317,11 +333,20 @@ client.on("interactionCreate", async interaction => {
     // --------------------------------------------------------
 
     connection.on("debug", message => {
-      // Don't print Discord voice tokens/session credentials.
+      // Redact temporary Discord voice credentials.
       const safeMessage = String(message)
-        .replace(/"token":"[^"]+"/g, '"token":"[REDACTED]"')
-        .replace(/"session_id":"[^"]+"/g, '"session_id":"[REDACTED]"')
-        .replace(/"sessionId":"[^"]+"/g, '"sessionId":"[REDACTED]"');
+        .replace(
+          /"token":"[^"]+"/g,
+          '"token":"[REDACTED]"'
+        )
+        .replace(
+          /"session_id":"[^"]+"/g,
+          '"session_id":"[REDACTED]"'
+        )
+        .replace(
+          /"sessionId":"[^"]+"/g,
+          '"sessionId":"[REDACTED]"'
+        );
 
       console.log(`🌐 VOICE DEBUG: ${safeMessage}`);
     });
@@ -350,13 +375,17 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    await interaction.reply(
-      "🔊 Joining your voice channel... Testing Discord voice networking."
+    // --------------------------------------------------------
+    // TELL USER WE ARE TESTING
+    // --------------------------------------------------------
+
+    await interaction.editReply(
+      "🔊 I'm joining the voice channel and testing the Discord voice connection..."
     );
 
-    // --------------------------------------------------------
-    // WAIT FOR READY
-    // --------------------------------------------------------
+    // ========================================================
+    // WAIT FOR DISCORD VOICE READY
+    // ========================================================
 
     console.log("⏳ Waiting for Discord voice connection...");
 
@@ -387,52 +416,20 @@ client.on("interactionCreate", async interaction => {
         console.error(
           `Current networking state: ${connection.state.networking.state.code}`
         );
-
-        console.error(
-          "Networking state names:"
-        );
-
-        console.error(
-          "0 = Opening WebSocket"
-        );
-
-        console.error(
-          "1 = Identifying"
-        );
-
-        console.error(
-          "2 = UDP Handshaking"
-        );
-
-        console.error(
-          "3 = Selecting Protocol"
-        );
-
-        console.error(
-          "4 = Ready"
-        );
-
-        console.error(
-          "5 = Resuming"
-        );
-
-        console.error(
-          "6 = Closed"
-        );
       }
 
       console.error("Voice connection error:", error);
 
       await interaction.editReply(
-        "❌ Discord could not establish the voice connection. Check the Render logs for the UDP test results."
+        "❌ Discord did not establish the voice connection. Check the Render logs for the networking state."
       );
 
       return;
     }
 
-    // --------------------------------------------------------
-    // FIND MUSIC FILE
-    // --------------------------------------------------------
+    // ========================================================
+    // MUSIC FILE
+    // ========================================================
 
     const musicFile = path.join(
       __dirname,
@@ -446,7 +443,7 @@ client.on("interactionCreate", async interaction => {
       console.error("❌ MUSIC FILE NOT FOUND!");
 
       await interaction.editReply(
-        "❌ I connected to voice, but I could not find the music file."
+        "❌ I connected to Discord voice, but I could not find the music file."
       );
 
       return;
@@ -454,9 +451,9 @@ client.on("interactionCreate", async interaction => {
 
     console.log("✅ Music file found.");
 
-    // --------------------------------------------------------
-    // CREATE AUDIO PLAYER
-    // --------------------------------------------------------
+    // ========================================================
+    // AUDIO PLAYER
+    // ========================================================
 
     const player = createAudioPlayer();
 
@@ -471,9 +468,9 @@ client.on("interactionCreate", async interaction => {
       console.error(error);
     });
 
-    // --------------------------------------------------------
+    // ========================================================
     // CREATE AUDIO RESOURCE
-    // --------------------------------------------------------
+    // ========================================================
 
     console.log("🎵 Creating audio resource...");
 
@@ -484,31 +481,29 @@ client.on("interactionCreate", async interaction => {
       }
     );
 
-    // --------------------------------------------------------
-    // VOLUME
-    // --------------------------------------------------------
-
     resource.volume.setVolume(0.5);
 
-    // --------------------------------------------------------
-    // SUBSCRIBE PLAYER
-    // --------------------------------------------------------
+    // ========================================================
+    // SUBSCRIBE
+    // ========================================================
 
-    console.log("🔗 Subscribing audio player to voice connection...");
+    console.log(
+      "🔗 Subscribing audio player to voice connection..."
+    );
 
     connection.subscribe(player);
 
-    // --------------------------------------------------------
-    // PLAY MUSIC
-    // --------------------------------------------------------
+    // ========================================================
+    // PLAY
+    // ========================================================
 
     console.log("▶️ Starting music...");
 
     player.play(resource);
 
-    // --------------------------------------------------------
-    // LOOP MUSIC
-    // --------------------------------------------------------
+    // ========================================================
+    // LOOP
+    // ========================================================
 
     player.on(AudioPlayerStatus.Idle, () => {
       console.log("🔁 Song finished. Restarting...");
@@ -549,7 +544,7 @@ client.on("interactionCreate", async interaction => {
 });
 
 // ============================================================
-// DISCORD LOGIN
+// LOGIN
 // ============================================================
 
 console.log("🔑 Logging into Discord...");
