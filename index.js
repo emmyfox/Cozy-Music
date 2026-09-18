@@ -17,6 +17,7 @@ const {
     createAudioResource,
     VoiceConnectionStatus,
     StreamType,
+    AudioPlayerStatus,
     entersState
 } = require('@discordjs/voice');
 
@@ -26,7 +27,9 @@ const {
 
 if (!process.env.DISCORD_TOKEN) {
     console.error('❌ DISCORD_TOKEN is missing!');
-    console.error('Add DISCORD_TOKEN to your Render Environment Variables.');
+    console.error(
+        'Add DISCORD_TOKEN to your Render Environment Variables.'
+    );
     process.exit(1);
 }
 
@@ -134,7 +137,8 @@ client.on('interactionCreate', async interaction => {
         // CHECK VOICE CHANNEL
         // ==========================================
 
-        const voiceChannel = interaction.member?.voice?.channel;
+        const voiceChannel =
+            interaction.member?.voice?.channel;
 
         if (!voiceChannel) {
 
@@ -168,6 +172,39 @@ client.on('interactionCreate', async interaction => {
         console.log(
             '🔊 Voice connection created.'
         );
+
+        // ==========================================
+        // WAIT FOR VOICE CONNECTION
+        // ==========================================
+
+        try {
+
+            await entersState(
+                connection,
+                VoiceConnectionStatus.Ready,
+                15000
+            );
+
+            console.log(
+                '✅ Discord voice connection is READY!'
+            );
+
+        } catch (error) {
+
+            console.error(
+                '❌ Voice connection did not become ready.'
+            );
+
+            console.error(error);
+
+            connection.destroy();
+
+            await interaction.editReply(
+                '❌ I joined the voice channel, but Discord did not establish the voice connection.'
+            );
+
+            return;
+        }
 
         // ==========================================
         // HANDLE VOICE DISCONNECT
@@ -252,19 +289,52 @@ client.on('interactionCreate', async interaction => {
         );
 
         // ==========================================
+        // CHECK FILE SIZE
+        // ==========================================
+
+        const fileStats = fs.statSync(audioPath);
+
+        console.log(
+            `📦 Music file size: ${fileStats.size} bytes`
+        );
+
+        if (fileStats.size === 0) {
+
+            console.error(
+                '❌ Music file is empty!'
+            );
+
+            connection.destroy();
+
+            await interaction.editReply(
+                '❌ The music file is empty.'
+            );
+
+            return;
+        }
+
+        // ==========================================
         // CREATE AUDIO PLAYER
         // ==========================================
 
         const player = createAudioPlayer();
-
-        connection.subscribe(player);
 
         console.log(
             '🎵 Audio player created.'
         );
 
         // ==========================================
-        // PLAY MUSIC
+        // SUBSCRIBE PLAYER TO VOICE CONNECTION
+        // ==========================================
+
+        connection.subscribe(player);
+
+        console.log(
+            '🔗 Audio player subscribed to voice connection.'
+        );
+
+        // ==========================================
+        // PLAY MUSIC FUNCTION
         // ==========================================
 
         const playMusic = () => {
@@ -282,41 +352,111 @@ client.on('interactionCreate', async interaction => {
                     }
                 );
 
+                console.log(
+                    '🎧 Audio resource created.'
+                );
+
                 player.play(resource);
+
+                console.log(
+                    '▶️ player.play(resource) called.'
+                );
 
             } catch (error) {
 
                 console.error(
-                    '❌ Error starting music:',
-                    error
+                    '❌ Error starting music:'
                 );
+
+                console.error(error);
             }
         };
+
+        // ==========================================
+        // AUDIO PLAYER STATE CHANGES
+        // ==========================================
+
+        player.on(
+            'stateChange',
+            (oldState, newState) => {
+
+                console.log(
+                    `🎵 Audio player state: ${oldState.status} -> ${newState.status}`
+                );
+
+                if (
+                    newState.status ===
+                    AudioPlayerStatus.Playing
+                ) {
+
+                    console.log(
+                        '🔊🔊🔊 MUSIC IS PLAYING! 🔊🔊🔊'
+                    );
+                }
+
+                if (
+                    newState.status ===
+                    AudioPlayerStatus.Idle
+                ) {
+
+                    console.log(
+                        '💤 Audio player is idle.'
+                    );
+                }
+
+                if (
+                    newState.status ===
+                    AudioPlayerStatus.AutoPaused
+                ) {
+
+                    console.log(
+                        '⏸️ Audio player was auto-paused.'
+                    );
+                }
+            }
+        );
 
         // ==========================================
         // LOOP MUSIC
         // ==========================================
 
-        player.on('idle', () => {
+        player.on(
+            'idle',
+            () => {
 
-            console.log(
-                '🔁 Music finished. Restarting...'
-            );
+                console.log(
+                    '🔁 Music finished. Restarting...'
+                );
 
-            playMusic();
-        });
+                playMusic();
+            }
+        );
 
         // ==========================================
         // AUDIO ERRORS
         // ==========================================
 
-        player.on('error', error => {
+        player.on(
+            'error',
+            error => {
 
-            console.error(
-                '❌ Audio player error:',
-                error
-            );
-        });
+                console.error(
+                    '❌❌❌ AUDIO PLAYER ERROR ❌❌❌'
+                );
+
+                console.error(error);
+
+                console.error(
+                    'Error message:',
+                    error.message
+                );
+
+                console.error(
+                    'Error stack:',
+                    error.stack
+                );
+            }
+        );
 
         // ==========================================
         // START MUSIC
@@ -335,9 +475,10 @@ client.on('interactionCreate', async interaction => {
     } catch (error) {
 
         console.error(
-            '❌ Error running /play:',
-            error
+            '❌ Error running /play:'
         );
+
+        console.error(error);
 
         // ==========================================
         // SAFELY RESPOND TO DISCORD
@@ -364,9 +505,10 @@ client.on('interactionCreate', async interaction => {
         } catch (replyError) {
 
             console.error(
-                '❌ Could not send error reply:',
-                replyError
+                '❌ Could not send error reply:'
             );
+
+            console.error(replyError);
         }
     }
 });
@@ -375,13 +517,17 @@ client.on('interactionCreate', async interaction => {
 // DISCORD CLIENT ERRORS
 // ==========================================
 
-client.on('error', error => {
+client.on(
+    'error',
+    error => {
 
-    console.error(
-        '❌ Discord client error:',
-        error
-    );
-});
+        console.error(
+            '❌ Discord client error:'
+        );
+
+        console.error(error);
+    }
+);
 
 // ==========================================
 // LOGIN
