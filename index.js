@@ -81,7 +81,7 @@ const commands = [
 ].map(command => command.toJSON());
 
 // ============================================================
-// REGISTER COMMAND
+// REGISTER SLASH COMMAND
 // ============================================================
 
 async function registerCommands() {
@@ -103,18 +103,14 @@ async function registerCommands() {
 }
 
 // ============================================================
-// UDP DIAGNOSTIC
+// BASIC UDP TEST
 // ============================================================
 
-async function runUDPDiagnostic() {
+async function runBasicUDPDiagnostic() {
   console.log("");
   console.log("========================================");
-  console.log("🧪 UDP CONNECTIVITY TEST");
+  console.log("🧪 BASIC UDP CONNECTIVITY TEST");
   console.log("========================================");
-
-  // ----------------------------------------------------------
-  // TEST 1 - DNS
-  // ----------------------------------------------------------
 
   console.log("🔎 Test 1: DNS resolution");
 
@@ -122,33 +118,19 @@ async function runUDPDiagnostic() {
     const addresses = await dns.promises.resolve4("discord.com");
 
     console.log("✅ DNS works.");
-    console.log("🌐 discord.com IPv4 addresses:");
 
     for (const address of addresses) {
       console.log(`   ${address}`);
     }
   } catch (error) {
     console.error("❌ DNS TEST FAILED");
-    console.error("Error:", error.message);
+    console.error(error.message);
   }
-
-  // ----------------------------------------------------------
-  // TEST 2 - UDP SOCKET
-  // ----------------------------------------------------------
 
   console.log("");
   console.log("🔎 Test 2: Creating UDP socket");
 
   const socket = dgram.createSocket("udp4");
-
-  socket.on("error", error => {
-    console.error("❌ UDP SOCKET ERROR");
-    console.error("Error:", error.message);
-
-    try {
-      socket.close();
-    } catch {}
-  });
 
   try {
     await new Promise((resolve, reject) => {
@@ -156,8 +138,8 @@ async function runUDPDiagnostic() {
         const address = socket.address();
 
         console.log("✅ UDP socket successfully created.");
-        console.log(`📡 Local UDP address: ${address.address}`);
-        console.log(`🔢 Local UDP port: ${address.port}`);
+        console.log(`📡 Local address: ${address.address}`);
+        console.log(`🔢 Local port: ${address.port}`);
 
         resolve();
       });
@@ -166,7 +148,7 @@ async function runUDPDiagnostic() {
     });
   } catch (error) {
     console.error("❌ UDP SOCKET CREATION FAILED");
-    console.error("Error:", error.message);
+    console.error(error.message);
 
     try {
       socket.close();
@@ -175,19 +157,15 @@ async function runUDPDiagnostic() {
     return;
   }
 
-  // ----------------------------------------------------------
-  // TEST 3 - SEND UDP
-  // ----------------------------------------------------------
-
   console.log("");
-  console.log("🔎 Test 3: Sending UDP packet");
+  console.log("🔎 Test 3: Sending generic UDP packet");
 
   try {
-    const testMessage = Buffer.from("Cozy Music UDP Test");
+    const message = Buffer.from("Cozy Music UDP Test");
 
     await new Promise((resolve, reject) => {
       socket.send(
-        testMessage,
+        message,
         443,
         "discord.com",
         error => {
@@ -201,28 +179,305 @@ async function runUDPDiagnostic() {
       );
     });
 
-    console.log("✅ UDP packet was successfully handed to Node.");
-    console.log("📡 Destination: discord.com:443");
-    console.log("ℹ️ Node can create and send UDP traffic.");
-    console.log("ℹ️ This does NOT prove Discord Voice UDP is working.");
+    console.log("✅ Generic UDP packet sent successfully.");
   } catch (error) {
     console.error("❌ UDP SEND FAILED");
-    console.error("Error:", error.message);
+    console.error(error.message);
   }
-
-  // ----------------------------------------------------------
-  // CLEANUP
-  // ----------------------------------------------------------
 
   try {
     socket.close();
-    console.log("🧹 UDP diagnostic socket closed.");
   } catch {}
 
   console.log("========================================");
-  console.log("🧪 UDP CONNECTIVITY TEST COMPLETE");
+  console.log("🧪 BASIC UDP TEST COMPLETE");
   console.log("========================================");
   console.log("");
+}
+
+// ============================================================
+// DISCORD VOICE UDP DISCOVERY TEST
+// ============================================================
+//
+// Discord Voice IP Discovery uses a 74-byte packet:
+//
+// Bytes 0-1   = packet type (1)
+// Bytes 2-3   = length (70)
+// Bytes 4-7   = SSRC
+// Bytes 8-71  = address area
+// Bytes 72-73 = port
+//
+// We send this to the ACTUAL Discord Voice UDP server.
+// ============================================================
+
+async function runDiscordVoiceUDPDiscovery(
+  voiceEndpoint,
+  voicePort,
+  ssrc
+) {
+  console.log("");
+  console.log("========================================");
+  console.log("🎯 DISCORD VOICE UDP DISCOVERY TEST");
+  console.log("========================================");
+
+  console.log(`🌐 Voice endpoint: ${voiceEndpoint}`);
+  console.log(`🔢 Voice UDP port: ${voicePort}`);
+  console.log(`🆔 SSRC: ${ssrc}`);
+
+  console.log("");
+  console.log("🔎 Resolving Discord Voice endpoint...");
+
+  let addresses;
+
+  try {
+    addresses = await dns.promises.resolve4(voiceEndpoint);
+
+    console.log("✅ Voice endpoint resolved.");
+
+    for (const address of addresses) {
+      console.log(`   ${address}`);
+    }
+  } catch (error) {
+    console.error("❌ Could not resolve Discord Voice endpoint.");
+    console.error(error.message);
+
+    return {
+      success: false,
+      reason: "DNS resolution failed"
+    };
+  }
+
+  const targetIP = addresses[0];
+
+  console.log("");
+  console.log(`🎯 Testing Discord Voice UDP server: ${targetIP}:${voicePort}`);
+
+  const socket = dgram.createSocket("udp4");
+
+  let finished = false;
+
+  const cleanup = () => {
+    try {
+      socket.close();
+    } catch {}
+  };
+
+  return new Promise(resolve => {
+    // --------------------------------------------------------
+    // SOCKET ERROR
+    // --------------------------------------------------------
+
+    socket.on("error", error => {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+
+      console.error("");
+      console.error("❌ DISCORD VOICE UDP SOCKET ERROR");
+      console.error(`Error: ${error.message}`);
+
+      cleanup();
+
+      resolve({
+        success: false,
+        reason: error.message
+      });
+    });
+
+    // --------------------------------------------------------
+    // RECEIVE UDP RESPONSE
+    // --------------------------------------------------------
+
+    socket.on("message", (message, remote) => {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+
+      console.log("");
+      console.log("🎉🎉🎉 DISCORD VOICE UDP RESPONSE RECEIVED! 🎉🎉🎉");
+
+      console.log(`📡 Response came from: ${remote.address}:${remote.port}`);
+      console.log(`📦 Response size: ${message.length} bytes`);
+
+      // ------------------------------------------------------
+      // Validate response
+      // ------------------------------------------------------
+
+      if (message.length < 74) {
+        console.log(
+          "⚠️ A UDP response arrived, but it was smaller than the expected 74 bytes."
+        );
+      } else {
+        console.log("✅ Response is at least 74 bytes.");
+      }
+
+      // ------------------------------------------------------
+      // Extract discovered IP
+      // ------------------------------------------------------
+
+      let discoveredIP = "";
+
+      if (message.length >= 72) {
+        const addressBuffer = message.subarray(8, 72);
+
+        const nullIndex = addressBuffer.indexOf(0);
+
+        const usableBuffer =
+          nullIndex === -1
+            ? addressBuffer
+            : addressBuffer.subarray(0, nullIndex);
+
+        discoveredIP = usableBuffer.toString("utf8");
+      }
+
+      // ------------------------------------------------------
+      // Extract discovered port
+      // ------------------------------------------------------
+
+      let discoveredPort = null;
+
+      if (message.length >= 74) {
+        discoveredPort = message.readUInt16BE(72);
+      }
+
+      console.log(`🌍 Discovered external IP: ${discoveredIP || "unknown"}`);
+      console.log(
+        `🔢 Discovered external UDP port: ${
+          discoveredPort ?? "unknown"
+        }`
+      );
+
+      console.log("");
+      console.log("✅✅✅ ACTUAL DISCORD VOICE UDP WORKS! ✅✅✅");
+
+      cleanup();
+
+      resolve({
+        success: true,
+        discoveredIP,
+        discoveredPort
+      });
+    });
+
+    // --------------------------------------------------------
+    // BIND LOCAL UDP SOCKET
+    // --------------------------------------------------------
+
+    socket.bind(0, "0.0.0.0", () => {
+      const localAddress = socket.address();
+
+      console.log("");
+      console.log("✅ UDP socket bound.");
+      console.log(
+        `📡 Local UDP address: ${localAddress.address}`
+      );
+      console.log(
+        `🔢 Local UDP port: ${localAddress.port}`
+      );
+
+      // ------------------------------------------------------
+      // BUILD DISCORD IP DISCOVERY PACKET
+      // ------------------------------------------------------
+
+      const packet = Buffer.alloc(74);
+
+      // Packet type = 1
+      packet.writeUInt16BE(1, 0);
+
+      // Packet length = 70
+      packet.writeUInt16BE(70, 2);
+
+      // SSRC
+      packet.writeUInt32BE(Number(ssrc) >>> 0, 4);
+
+      console.log("");
+      console.log("📦 Discord Voice discovery packet created.");
+      console.log(`📦 Packet size: ${packet.length} bytes`);
+      console.log("📦 Packet type: 1");
+      console.log("📦 Packet length field: 70");
+      console.log(`📦 SSRC: ${ssrc}`);
+
+      // ------------------------------------------------------
+      // SEND DISCOVERY PACKET
+      // ------------------------------------------------------
+
+      console.log("");
+      console.log("🚀 Sending Discord Voice UDP discovery packet...");
+
+      socket.send(
+        packet,
+        0,
+        packet.length,
+        voicePort,
+        targetIP,
+        error => {
+          if (error) {
+            if (finished) {
+              return;
+            }
+
+            finished = true;
+
+            console.error("❌ FAILED TO SEND DISCOVERY PACKET");
+            console.error(error.message);
+
+            cleanup();
+
+            resolve({
+              success: false,
+              reason: error.message
+            });
+
+            return;
+          }
+
+          console.log("✅ Discovery packet sent.");
+          console.log("⏳ Waiting for Discord Voice UDP response...");
+        }
+      );
+    });
+
+    // --------------------------------------------------------
+    // TIMEOUT
+    // --------------------------------------------------------
+
+    setTimeout(() => {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+
+      console.error("");
+      console.error("========================================");
+      console.error("❌ DISCORD VOICE UDP DISCOVERY TIMEOUT");
+      console.error("========================================");
+
+      console.error(
+        `❌ No UDP response received from ${targetIP}:${voicePort}`
+      );
+
+      console.error("");
+      console.error(
+        "This means the bot could send the Discord Voice discovery packet,"
+      );
+
+      console.error(
+        "but no response came back to the Render server."
+      );
+
+      cleanup();
+
+      resolve({
+        success: false,
+        reason: "No UDP response received"
+      });
+    }, 10000);
+  });
 }
 
 // ============================================================
@@ -235,8 +490,7 @@ client.once("ready", async () => {
 
   await registerCommands();
 
-  // Run UDP test once at startup.
-  await runUDPDiagnostic();
+  await runBasicUDPDiagnostic();
 });
 
 // ============================================================
@@ -255,8 +509,7 @@ client.on("interactionCreate", async interaction => {
   console.log(`🎵 /play used by ${interaction.user.tag}`);
 
   // ==========================================================
-  // IMPORTANT:
-  // ACKNOWLEDGE DISCORD IMMEDIATELY
+  // IMMEDIATELY ACKNOWLEDGE DISCORD
   // ==========================================================
 
   try {
@@ -264,7 +517,7 @@ client.on("interactionCreate", async interaction => {
 
     console.log("✅ Discord interaction acknowledged.");
   } catch (error) {
-    console.error("❌ Could not acknowledge Discord interaction.");
+    console.error("❌ Could not acknowledge interaction.");
     console.error(error);
     return;
   }
@@ -285,12 +538,20 @@ client.on("interactionCreate", async interaction => {
 
   const voiceChannel = member.voice.channel;
 
-  console.log(`🔊 Joining voice channel: ${voiceChannel.name}`);
-  console.log(`🆔 Voice Channel ID: ${voiceChannel.id}`);
-  console.log(`🆔 Guild ID: ${voiceChannel.guild.id}`);
+  console.log(
+    `🔊 Joining voice channel: ${voiceChannel.name}`
+  );
+
+  console.log(
+    `🆔 Voice Channel ID: ${voiceChannel.id}`
+  );
+
+  console.log(
+    `🆔 Guild ID: ${voiceChannel.guild.id}`
+  );
 
   // ==========================================================
-  // JOIN VOICE
+  // JOIN DISCORD VOICE
   // ==========================================================
 
   let connection;
@@ -308,12 +569,13 @@ client.on("interactionCreate", async interaction => {
     });
 
     console.log("🔊 Voice connection created.");
+
     console.log(
       `📡 Initial voice state: ${connection.state.status}`
     );
 
     // --------------------------------------------------------
-    // VOICE STATE LOGGING
+    // VOICE STATE
     // --------------------------------------------------------
 
     connection.on("stateChange", (oldState, newState) => {
@@ -333,7 +595,6 @@ client.on("interactionCreate", async interaction => {
     // --------------------------------------------------------
 
     connection.on("debug", message => {
-      // Redact temporary Discord voice credentials.
       const safeMessage = String(message)
         .replace(
           /"token":"[^"]+"/g,
@@ -352,7 +613,7 @@ client.on("interactionCreate", async interaction => {
     });
 
     // --------------------------------------------------------
-    // CONNECTION ERROR
+    // VOICE ERROR
     // --------------------------------------------------------
 
     connection.on("error", error => {
@@ -361,7 +622,7 @@ client.on("interactionCreate", async interaction => {
     });
 
     // --------------------------------------------------------
-    // NETWORKING EVENTS
+    // NETWORK ERROR
     // --------------------------------------------------------
 
     if (connection.state.networking) {
@@ -375,53 +636,176 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // --------------------------------------------------------
-    // TELL USER WE ARE TESTING
-    // --------------------------------------------------------
-
     await interaction.editReply(
-      "🔊 I'm joining the voice channel and testing the Discord voice connection..."
+      "🔊 Joining Discord voice and testing the voice connection..."
     );
 
     // ========================================================
-    // WAIT FOR DISCORD VOICE READY
+    // WAIT FOR VOICE NETWORKING TO PROVIDE UDP INFORMATION
     // ========================================================
 
-    console.log("⏳ Waiting for Discord voice connection...");
+    console.log(
+      "⏳ Waiting for Discord Voice networking information..."
+    );
 
     try {
       await entersState(
         connection,
-        VoiceConnectionStatus.Ready,
-        30000
+        VoiceConnectionStatus.Connecting,
+        10000
+      );
+    } catch {}
+
+    // --------------------------------------------------------
+    // Give Discord a few seconds to deliver voice server info.
+    // --------------------------------------------------------
+
+    let discoveryAttempted = false;
+
+    for (let attempt = 1; attempt <= 20; attempt++) {
+      console.log(
+        `🔎 Checking Discord Voice networking information... ${attempt}/20`
       );
 
+      const state = connection.state;
+
+      if (state.networking) {
+        const networking = state.networking;
+
+        // ----------------------------------------------------
+        // IMPORTANT:
+        // The networking object internally receives Discord's
+        // OP 2 Ready packet containing IP, port and SSRC.
+        // ----------------------------------------------------
+
+        if (
+          networking.state &&
+          networking.state.udp &&
+          networking.state.udp.remote
+        ) {
+          const remote = networking.state.udp.remote;
+
+          console.log(
+            "🎯 Discord Voice UDP information found!"
+          );
+
+          console.log(
+            `🌐 UDP host: ${remote.hostname || remote.address || "unknown"}`
+          );
+
+          console.log(
+            `🔢 UDP port: ${remote.port || "unknown"}`
+          );
+        }
+      }
+
+      // ------------------------------------------------------
+      // Inspect networking object for Discord's UDP socket.
+      // ------------------------------------------------------
+
+      if (
+        state.networking &&
+        state.networking.state &&
+        state.networking.state.udp
+      ) {
+        const udp = state.networking.state.udp;
+
+        console.log(
+          "📡 Discord Voice UDP socket exists."
+        );
+
+        // If discord.js has already opened its UDP socket,
+        // we can report its state.
+        if (udp.remote) {
+          console.log(
+            `🎯 Discord UDP remote: ${
+              udp.remote.hostname ||
+              udp.remote.address ||
+              "unknown"
+            }:${udp.remote.port || "unknown"}`
+          );
+        }
+      }
+
+      // ------------------------------------------------------
+      // If the normal library has already reached READY,
+      // let it continue normally.
+      // ------------------------------------------------------
+
+      if (
+        connection.state.status === VoiceConnectionStatus.Ready
+      ) {
+        console.log(
+          "🎉 Discord Voice reached READY."
+        );
+
+        break;
+      }
+
+      // ------------------------------------------------------
+      // Check whether networking has already closed.
+      // ------------------------------------------------------
+
+      if (
+        connection.state.networking &&
+        connection.state.networking.state &&
+        connection.state.networking.state.code === 6
+      ) {
+        console.error(
+          "❌ Discord networking closed before UDP became ready."
+        );
+
+        break;
+      }
+
+      await new Promise(resolve =>
+        setTimeout(resolve, 500)
+      );
+    }
+
+    // ========================================================
+    // NORMAL VOICE READY
+    // ========================================================
+
+    if (
+      connection.state.status === VoiceConnectionStatus.Ready
+    ) {
       console.log("");
       console.log("========================================");
       console.log("🎉🎉🎉 VOICE CONNECTION READY 🎉🎉🎉");
       console.log("========================================");
       console.log("");
 
-    } catch (error) {
-      console.error("");
-      console.error("========================================");
-      console.error("❌❌❌ VOICE CONNECTION FAILED ❌❌❌");
-      console.error("========================================");
+    } else {
+      console.log("");
+      console.log("========================================");
+      console.log("🔎 VOICE CONNECTION DID NOT REACH READY");
+      console.log("========================================");
 
-      console.error(
+      console.log(
         `Current voice state: ${connection.state.status}`
       );
 
       if (connection.state.networking) {
-        console.error(
+        console.log(
           `Current networking state: ${connection.state.networking.state.code}`
         );
       }
 
-      console.error("Voice connection error:", error);
+      // ------------------------------------------------------
+      // IMPORTANT
+      //
+      // The actual Discord Voice UDP endpoint is supplied by
+      // Discord's OP 2 Ready packet. If the library closes
+      // before exposing it, we cannot safely perform the
+      // exact discovery test ourselves.
+      //
+      // We therefore report the failure rather than inventing
+      // an endpoint or using discord.com:443.
+      // ------------------------------------------------------
 
       await interaction.editReply(
-        "❌ Discord did not establish the voice connection. Check the Render logs for the networking state."
+        "❌ Discord Voice closed before the UDP discovery stage. Check the Render logs for the networking state."
       );
 
       return;
@@ -437,7 +821,9 @@ client.on("interactionCreate", async interaction => {
       "starlight.mp3.mp3"
     );
 
-    console.log(`🎵 Looking for music file: ${musicFile}`);
+    console.log(
+      `🎵 Looking for music file: ${musicFile}`
+    );
 
     if (!fs.existsSync(musicFile)) {
       console.error("❌ MUSIC FILE NOT FOUND!");
@@ -469,7 +855,7 @@ client.on("interactionCreate", async interaction => {
     });
 
     // ========================================================
-    // CREATE AUDIO RESOURCE
+    // AUDIO RESOURCE
     // ========================================================
 
     console.log("🎵 Creating audio resource...");
@@ -506,7 +892,9 @@ client.on("interactionCreate", async interaction => {
     // ========================================================
 
     player.on(AudioPlayerStatus.Idle, () => {
-      console.log("🔁 Song finished. Restarting...");
+      console.log(
+        "🔁 Song finished. Restarting..."
+      );
 
       try {
         const newResource = createAudioResource(
@@ -519,25 +907,34 @@ client.on("interactionCreate", async interaction => {
         newResource.volume.setVolume(0.5);
 
         player.play(newResource);
+
       } catch (error) {
-        console.error("❌ Error restarting music:");
+        console.error(
+          "❌ Error restarting music:"
+        );
+
         console.error(error);
       }
     });
 
-    console.log("🎶 Music playback started.");
+    console.log(
+      "🎶 Music playback started."
+    );
 
     await interaction.editReply(
       "🎶 Cozy Music is now playing!"
     );
 
   } catch (error) {
-    console.error("❌ ERROR WHILE JOINING VOICE");
+    console.error(
+      "❌ ERROR WHILE JOINING VOICE"
+    );
+
     console.error(error);
 
     try {
       await interaction.editReply(
-        "❌ Something went wrong while connecting to the voice channel."
+        "❌ Something went wrong while connecting to Discord voice."
       );
     } catch {}
   }
