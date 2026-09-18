@@ -1,4 +1,6 @@
 require('dotenv').config();
+const ffmpeg = require('ffmpeg-static');
+process.env.FFMPEG_PATH = ffmpeg;
 
 // --------------------------------------------------
 // TINY WEB SERVER FOR RENDER FREE TIER
@@ -44,11 +46,6 @@ const client = new Client({
 const GUILD_ID = process.env.GUILD_ID;
 const MUSIC_DIR = __dirname;
 
-// Ensure the local music directory exists
-if (!fs.existsSync(MUSIC_DIR)) {
-    fs.mkdirSync(MUSIC_DIR);
-}
-
 // --------------------------------------------------
 // COMMANDS
 // --------------------------------------------------
@@ -88,7 +85,7 @@ async function playNext(guildId) {
         const files = fs.readdirSync(MUSIC_DIR).filter(file => file.endsWith('.mp3') || file.endsWith('.wav'));
         
         if (files.length === 0) {
-            console.log(`[${guildId}] No audio files found in the 'music' folder!`);
+            console.log(`[${guildId}] No audio files found in the root directory!`);
             return;
         }
 
@@ -102,7 +99,11 @@ async function playNext(guildId) {
     try {
         console.log(`[${guildId}] Now Playing: ${musicData.currentTrack}`);
 
-        const resource = createAudioResource(filePath);
+        const resource = createAudioResource(filePath, {
+            inlineVolume: true
+        });
+        resource.volume.setVolume(1.0); // Full volume
+        
         musicData.player.play(resource);
 
     } catch (error) {
@@ -159,7 +160,8 @@ client.on('interactionCreate', async interaction => {
                 const connection = joinVoiceChannel({
                     channelId: channel.id,
                     guildId: guildId,
-                    adapterCreator: interaction.guild.voiceAdapterCreator
+                    adapterCreator: interaction.guild.voiceAdapterCreator,
+                    selfDeaf: false
                 });
 
                 const player = createAudioPlayer({
@@ -195,7 +197,7 @@ client.on('interactionCreate', async interaction => {
             if (musicData.player.state.status === AudioPlayerStatus.Idle || musicData.queue.length === 0) {
                 const files = fs.readdirSync(MUSIC_DIR).filter(file => file.endsWith('.mp3') || file.endsWith('.wav'));
                 if (files.length === 0) {
-                    return interaction.editReply(`❌ No \`.mp3\` or \`.wav\` files found in your **music** folder!`);
+                    return interaction.editReply(`❌ No \`.mp3\` or \`.wav\` files found in your repository directory!`);
                 }
                 musicData.queue = files.map(file => path.join(MUSIC_DIR, file));
                 await playNext(guildId);
@@ -245,7 +247,7 @@ client.on('interactionCreate', async interaction => {
 // --------------------------------------------------
 
 if (!process.env.DISCORD_TOKEN) {
-    console.error('❌ DISCORD_TOKEN is missing from your .env file.');
+    console.error('❌ DISCORD_TOKEN is missing from your environment variables.');
     process.exit(1);
 }
 
