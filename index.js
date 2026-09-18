@@ -1,5 +1,21 @@
 require('dotenv').config();
 
+// --------------------------------------------------
+// TINY WEB SERVER FOR RENDER FREE TIER
+// --------------------------------------------------
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+app.get('/', (req, res) => {
+    res.send('Cozy Music Bot is alive and streaming!');
+});
+
+app.listen(PORT, () => {
+    console.log(`Web server is running on port ${PORT}`);
+});
+// --------------------------------------------------
+
 const fs = require('fs');
 const path = require('path');
 const {
@@ -34,7 +50,7 @@ if (!fs.existsSync(MUSIC_DIR)) {
 }
 
 // --------------------------------------------------
-// COMMANDS
+c// COMMANDS
 // --------------------------------------------------
 
 const commands = [
@@ -68,7 +84,6 @@ async function playNext(guildId) {
         return;
     }
 
-    // If the queue is empty, reload all songs from the 'music' folder to loop forever
     if (musicData.queue.length === 0) {
         const files = fs.readdirSync(MUSIC_DIR).filter(file => file.endsWith('.mp3') || file.endsWith('.wav'));
         
@@ -125,9 +140,6 @@ client.on('interactionCreate', async interaction => {
 
     const guildId = interaction.guild.id;
 
-    // ==================================================
-    // /PLAY
-    // ==================================================
     if (interaction.commandName === 'play') {
         const channel = interaction.member?.voice?.channel;
 
@@ -168,7 +180,6 @@ client.on('interactionCreate', async interaction => {
 
                 music.set(guildId, musicData);
 
-                // When a song finishes, automatically play the next one
                 player.on(AudioPlayerStatus.Idle, () => {
                     playNext(guildId).catch(console.error);
                 });
@@ -181,7 +192,6 @@ client.on('interactionCreate', async interaction => {
 
             musicData.stopped = false;
 
-            // If nothing is currently playing, start the loop
             if (musicData.player.state.status === AudioPlayerStatus.Idle || musicData.queue.length === 0) {
                 const files = fs.readdirSync(MUSIC_DIR).filter(file => file.endsWith('.mp3') || file.endsWith('.wav'));
                 if (files.length === 0) {
@@ -201,9 +211,6 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // ==================================================
-    // /SKIP
-    // ==================================================
     if (interaction.commandName === 'skip') {
         const musicData = music.get(guildId);
 
@@ -217,9 +224,6 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply(`⏭️ Skipped **${skipped || 'current track'}**.`);
     }
 
-    // ==================================================
-    // /STOP
-    // ==================================================
     if (interaction.commandName === 'stop') {
         const musicData = music.get(guildId);
 
