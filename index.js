@@ -23,37 +23,52 @@ const {
 } = require("@discordjs/voice");
 
 console.log("========================================");
-console.log("PACKAGE / RUNTIME INFORMATION");
+console.log("COZY MUSICAPP STARTING");
 console.log("========================================");
 
 console.log("Node.js:", process.version);
 
-try {
-    console.log(
-        "discord.js:",
-        require("discord.js/package.json").version
-    );
-} catch (error) {
-    console.log("Could not read discord.js version.");
+function getPackageVersion(packageName) {
+    try {
+        const packageMain = require.resolve(packageName);
+
+        const packageRoot = path.resolve(
+            path.dirname(packageMain),
+            ".."
+        );
+
+        const packageJsonPath = path.join(
+            packageRoot,
+            "package.json"
+        );
+
+        const packageJson = JSON.parse(
+            fs.readFileSync(
+                packageJsonPath,
+                "utf8"
+            )
+        );
+
+        return packageJson.version;
+    } catch (error) {
+        return "unknown";
+    }
 }
 
-try {
-    console.log(
-        "@discordjs/voice:",
-        require("@discordjs/voice/package.json").version
-    );
-} catch (error) {
-    console.log("Could not read @discordjs/voice version.");
-}
+console.log(
+    "discord.js:",
+    getPackageVersion("discord.js")
+);
 
-try {
-    console.log(
-        "opusscript:",
-        require("opusscript/package.json").version
-    );
-} catch (error) {
-    console.log("Could not read opusscript version.");
-}
+console.log(
+    "@discordjs/voice:",
+    getPackageVersion("@discordjs/voice")
+);
+
+console.log(
+    "opusscript:",
+    getPackageVersion("opusscript")
+);
 
 console.log("========================================");
 console.log("");
@@ -61,9 +76,14 @@ console.log("");
 const PORT = process.env.PORT || 10000;
 
 if (!process.env.DISCORD_TOKEN) {
-    console.error("DISCORD_TOKEN is missing.");
+    console.error("========================================");
+    console.error("ERROR: DISCORD_TOKEN IS MISSING");
+    console.error("========================================");
     process.exit(1);
 }
+
+console.log("DISCORD_TOKEN found.");
+console.log("");
 
 const app = express();
 
@@ -82,7 +102,7 @@ app.listen(PORT, "0.0.0.0", () => {
     console.log("========================================");
     console.log("WEB SERVER STARTED");
     console.log("========================================");
-    console.log(`Port: ${PORT}`);
+    console.log("Port:", PORT);
     console.log("");
 });
 
@@ -95,6 +115,36 @@ const client = new Client({
     ]
 });
 
+console.log("Discord client created.");
+
+client.on("error", (error) => {
+    console.error("");
+    console.error("========================================");
+    console.error("DISCORD CLIENT ERROR");
+    console.error("========================================");
+    console.error(error);
+});
+
+client.on("warn", (message) => {
+    console.warn("");
+    console.warn("========================================");
+    console.warn("DISCORD CLIENT WARNING");
+    console.warn("========================================");
+    console.warn(message);
+});
+
+client.on("debug", (message) => {
+    console.log("DISCORD DEBUG:", message);
+});
+
+client.on("shardError", (error) => {
+    console.error("");
+    console.error("========================================");
+    console.error("DISCORD SHARD ERROR");
+    console.error("========================================");
+    console.error(error);
+});
+
 const commands = [
     new SlashCommandBuilder()
         .setName("play")
@@ -104,22 +154,33 @@ const commands = [
 
 async function registerCommands() {
     try {
+        console.log("");
+        console.log("========================================");
+        console.log("REGISTERING SLASH COMMAND");
+        console.log("========================================");
+
         const rest = new REST({
             version: "10"
-        }).setToken(process.env.DISCORD_TOKEN);
-
-        console.log("Registering Discord slash commands...");
+        }).setToken(
+            process.env.DISCORD_TOKEN
+        );
 
         await rest.put(
-            Routes.applicationCommands(client.user.id),
+            Routes.applicationCommands(
+                client.user.id
+            ),
             {
                 body: commands
             }
         );
 
-        console.log("Slash commands registered.");
+        console.log("Slash command registered successfully.");
+        console.log("");
     } catch (error) {
-        console.error("Slash command registration failed:");
+        console.error("");
+        console.error("========================================");
+        console.error("SLASH COMMAND REGISTRATION FAILED");
+        console.error("========================================");
         console.error(error);
     }
 }
@@ -133,18 +194,20 @@ async function runBasicUDPTest() {
     console.log("Test 1: DNS resolution");
 
     try {
-        const addresses = await new Promise((resolve, reject) => {
-            dns.resolve4(
-                "discord.com",
-                (error, result) => {
-                    if (error) {
-                        reject(error);
-                    } else {
-                        resolve(result);
+        const addresses = await new Promise(
+            (resolve, reject) => {
+                dns.resolve4(
+                    "discord.com",
+                    (error, result) => {
+                        if (error) {
+                            reject(error);
+                        } else {
+                            resolve(result);
+                        }
                     }
-                }
-            );
-        });
+                );
+            }
+        );
 
         console.log("DNS works.");
         console.log("discord.com IPv4 addresses:");
@@ -157,36 +220,50 @@ async function runBasicUDPTest() {
         console.error(error);
     }
 
+    console.log("");
     console.log("Test 2: Creating UDP socket");
 
     const socket = dgram.createSocket("udp4");
 
     try {
-        await new Promise((resolve, reject) => {
-            socket.once("error", reject);
+        await new Promise(
+            (resolve, reject) => {
+                socket.once(
+                    "error",
+                    reject
+                );
 
-            socket.bind(
-                0,
-                "0.0.0.0",
-                () => {
-                    resolve();
-                }
-            );
-        });
+                socket.bind(
+                    0,
+                    "0.0.0.0",
+                    () => {
+                        resolve();
+                    }
+                );
+            }
+        );
 
-        const address = socket.address();
+        const address =
+            socket.address();
 
-        console.log("UDP socket successfully created.");
+        console.log(
+            "UDP socket successfully created."
+        );
+
         console.log(
             "Local address:",
             address.address
         );
+
         console.log(
             "Local port:",
             address.port
         );
     } catch (error) {
-        console.error("UDP socket creation failed:");
+        console.error(
+            "UDP socket creation failed:"
+        );
+
         console.error(error);
 
         try {
@@ -196,6 +273,7 @@ async function runBasicUDPTest() {
         return;
     }
 
+    console.log("");
     console.log("Test 3: Sending generic UDP packet");
 
     try {
@@ -203,22 +281,24 @@ async function runBasicUDPTest() {
             "Cozy Music UDP test"
         );
 
-        await new Promise((resolve, reject) => {
-            socket.send(
-                packet,
-                0,
-                packet.length,
-                443,
-                "discord.com",
-                (error) => {
-                    if (error) {
-                        reject(error);
-                    } else {
-                        resolve();
+        await new Promise(
+            (resolve, reject) => {
+                socket.send(
+                    packet,
+                    0,
+                    packet.length,
+                    443,
+                    "discord.com",
+                    (error) => {
+                        if (error) {
+                            reject(error);
+                        } else {
+                            resolve();
+                        }
                     }
-                }
-            );
-        });
+                );
+            }
+        );
 
         console.log(
             "Generic UDP packet sent successfully."
@@ -296,11 +376,11 @@ async function playMusic(interaction) {
     try {
         console.log("");
         console.log("========================================");
-        console.log("/play COMMAND");
+        console.log("/play COMMAND RECEIVED");
         console.log("========================================");
 
         console.log(
-            "/play used by:",
+            "Used by:",
             interaction.user.username
         );
 
@@ -310,7 +390,8 @@ async function playMusic(interaction) {
             "Discord interaction acknowledged."
         );
 
-        const member = interaction.member;
+        const member =
+            interaction.member;
 
         if (!member) {
             await interaction.editReply(
@@ -346,15 +427,22 @@ async function playMusic(interaction) {
             voiceChannel.guild.id
         );
 
-        connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: voiceChannel.guild.id,
-            adapterCreator:
-                voiceChannel.guild.voiceAdapterCreator,
-            selfDeaf: true,
-            selfMute: false,
-            debug: true
-        });
+        connection =
+            joinVoiceChannel({
+                channelId:
+                    voiceChannel.id,
+
+                guildId:
+                    voiceChannel.guild.id,
+
+                adapterCreator:
+                    voiceChannel.guild
+                        .voiceAdapterCreator,
+
+                selfDeaf: true,
+                selfMute: false,
+                debug: true
+            });
 
         console.log(
             "Voice connection created."
@@ -373,6 +461,10 @@ async function playMusic(interaction) {
                     oldState.status,
                     "->",
                     newState.status
+                );
+
+                logNetworkingState(
+                    connection
                 );
 
                 if (
@@ -396,24 +488,25 @@ async function playMusic(interaction) {
         connection.on(
             "debug",
             (message) => {
-                let safeMessage = message;
+                let safeMessage =
+                    String(message);
 
                 safeMessage =
                     safeMessage.replace(
                         /("token":")([^"]+)(")/g,
-                        '$1[REDACTED]$3'
+                        "$1[REDACTED]$3"
                     );
 
                 safeMessage =
                     safeMessage.replace(
                         /("session_id":")([^"]+)(")/g,
-                        '$1[REDACTED]$3'
+                        "$1[REDACTED]$3"
                     );
 
                 safeMessage =
                     safeMessage.replace(
                         /("sessionId":")([^"]+)(")/g,
-                        '$1[REDACTED]$3'
+                        "$1[REDACTED]$3"
                     );
 
                 console.log(
@@ -430,9 +523,11 @@ async function playMusic(interaction) {
                 console.error(
                     "========================================"
                 );
+
                 console.error(
                     "VOICE CONNECTION ERROR"
                 );
+
                 console.error(
                     "========================================"
                 );
@@ -441,8 +536,9 @@ async function playMusic(interaction) {
             }
         );
 
+        console.log("");
         console.log(
-            "Waiting for Discord Voice networking information..."
+            "Waiting for Discord Voice..."
         );
 
         let ready = false;
@@ -453,7 +549,8 @@ async function playMusic(interaction) {
             attempt++
         ) {
             console.log(
-                `Checking Discord Voice networking information... ${attempt}/20`
+                "Voice check",
+                attempt + "/20"
             );
 
             console.log(
@@ -492,7 +589,10 @@ async function playMusic(interaction) {
 
             await new Promise(
                 (resolve) =>
-                    setTimeout(resolve, 1000)
+                    setTimeout(
+                        resolve,
+                        1000
+                    )
             );
         }
 
@@ -501,9 +601,11 @@ async function playMusic(interaction) {
             console.log(
                 "========================================"
             );
+
             console.log(
                 "VOICE CONNECTION DID NOT REACH READY"
             );
+
             console.log(
                 "========================================"
             );
@@ -518,7 +620,7 @@ async function playMusic(interaction) {
             );
 
             await interaction.editReply(
-                "Discord Voice closed before the UDP discovery stage. Check the Render logs for the networking state."
+                "Discord Voice closed before the connection became ready. Check the Render logs."
             );
 
             try {
@@ -544,13 +646,13 @@ async function playMusic(interaction) {
             musicFile
         );
 
-        if (!fs.existsSync(musicFile)) {
-            console.error(
-                "Music file does not exist:"
-            );
-
-            console.error(
+        if (
+            !fs.existsSync(
                 musicFile
+            )
+        ) {
+            console.error(
+                "Music file does not exist."
             );
 
             await interaction.editReply(
@@ -614,17 +716,12 @@ async function playMusic(interaction) {
             player
         );
 
-        console.log(
-            "Audio player subscribed to voice connection."
-        );
-
         player.play(
             resource
         );
 
         console.log(
-            "Playing:",
-            musicFile
+            "Cozy Music is playing."
         );
 
         await interaction.editReply(
@@ -662,9 +759,11 @@ async function playMusic(interaction) {
         console.error(
             "========================================"
         );
+
         console.error(
             "/PLAY ERROR"
         );
+
         console.error(
             "========================================"
         );
@@ -708,9 +807,11 @@ client.once(
         console.log(
             "========================================"
         );
+
         console.log(
             "COZY MUSICAPP ONLINE"
         );
+
         console.log(
             "========================================"
         );
@@ -726,7 +827,7 @@ client.once(
         );
 
         console.log(
-            "Discord client is ready."
+            "Discord client is READY."
         );
 
         await registerCommands();
@@ -738,11 +839,21 @@ client.once(
 client.on(
     "interactionCreate",
     async (interaction) => {
+        console.log(
+            "Interaction received:",
+            interaction.type
+        );
+
         if (
             !interaction.isChatInputCommand()
         ) {
             return;
         }
+
+        console.log(
+            "Command:",
+            interaction.commandName
+        );
 
         if (
             interaction.commandName ===
@@ -756,7 +867,7 @@ client.on(
 );
 
 console.log(
-    "Logging into Discord..."
+    "Attempting Discord login..."
 );
 
 client.login(
@@ -764,12 +875,21 @@ client.login(
 )
     .then(() => {
         console.log(
-            "Discord login request sent."
+            "Discord login request completed."
         );
     })
     .catch((error) => {
+        console.error("");
         console.error(
-            "Discord login failed:"
+            "========================================"
+        );
+
+        console.error(
+            "DISCORD LOGIN FAILED"
+        );
+
+        console.error(
+            "========================================"
         );
 
         console.error(error);
@@ -780,8 +900,9 @@ client.login(
 process.on(
     "unhandledRejection",
     (error) => {
+        console.error("");
         console.error(
-            "UNHANDLED PROMISE REJECTION:"
+            "UNHANDLED PROMISE REJECTION"
         );
 
         console.error(error);
@@ -791,8 +912,9 @@ process.on(
 process.on(
     "uncaughtException",
     (error) => {
+        console.error("");
         console.error(
-            "UNCAUGHT EXCEPTION:"
+            "UNCAUGHT EXCEPTION"
         );
 
         console.error(error);
