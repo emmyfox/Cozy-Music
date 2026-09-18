@@ -1,3 +1,4 @@
+```js
 const {
     Client,
     GatewayIntentBits,
@@ -25,7 +26,7 @@ const path = require('path');
 // Force IPv4 for cloud platforms like Render
 process.env.IPV4_ONLY = 'true';
 
-// Render provides PORT automatically
+// Render port
 const PORT = process.env.PORT || 10000;
 
 // ==========================================
@@ -35,7 +36,7 @@ const PORT = process.env.PORT || 10000;
 const app = express();
 
 app.get('/', (req, res) => {
-    res.send('Cozy Music Bot is alive and streaming! 🎶');
+    res.send('🎶 Cozy Music Bot is alive!');
 });
 
 app.listen(PORT, () => {
@@ -59,10 +60,10 @@ const client = new Client({
 // ==========================================
 
 client.once('ready', async () => {
-    console.log(`🤖 COZY MUSIC BOT ONLINE`);
+
+    console.log('🤖 COZY MUSIC BOT ONLINE');
     console.log(`👤 Logged in as ${client.user.tag}`);
 
-    // Slash commands
     const commands = [
         {
             name: 'play',
@@ -74,6 +75,7 @@ client.once('ready', async () => {
         .setToken(process.env.DISCORD_TOKEN);
 
     try {
+
         await rest.put(
             Routes.applicationCommands(client.user.id),
             {
@@ -82,40 +84,45 @@ client.once('ready', async () => {
         );
 
         console.log('✅ Slash commands registered.');
+
     } catch (error) {
-        console.error('❌ Failed to register slash commands:', error);
+
+        console.error(
+            '❌ Failed to register slash commands:',
+            error
+        );
     }
 });
 
 // ==========================================
-// SLASH COMMANDS
+// /PLAY COMMAND
 // ==========================================
 
 client.on('interactionCreate', async interaction => {
 
-    // Ignore anything that isn't a slash command
     if (!interaction.isChatInputCommand()) {
         return;
     }
 
-    // Only handle /play
     if (interaction.commandName !== 'play') {
         return;
     }
 
-    console.log(`🎵 /play used by ${interaction.user.tag}`);
+    console.log(
+        `🎵 /play used by ${interaction.user.tag}`
+    );
 
     try {
 
-        // ==========================================
+        // ------------------------------------------
         // ACKNOWLEDGE DISCORD IMMEDIATELY
-        // ==========================================
+        // ------------------------------------------
 
         await interaction.deferReply();
 
-        // ==========================================
+        // ------------------------------------------
         // CHECK VOICE CHANNEL
-        // ==========================================
+        // ------------------------------------------
 
         const member = interaction.member;
 
@@ -130,34 +137,46 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        console.log(`🔊 Joining voice channel: ${voiceChannel.name}`);
+        console.log(
+            `🔊 Joining voice channel: ${voiceChannel.name}`
+        );
 
-        // ==========================================
-        // JOIN VOICE CHANNEL
-        // ==========================================
+        // ------------------------------------------
+        // JOIN VOICE
+        // ------------------------------------------
 
         const connection = joinVoiceChannel({
+
             channelId: voiceChannel.id,
+
             guildId: voiceChannel.guild.id,
-            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+
+            adapterCreator:
+                voiceChannel.guild.voiceAdapterCreator,
+
             selfDeaf: true
         });
 
-        console.log('🔊 Voice connection created.');
+        console.log(
+            '🔊 Voice connection created.'
+        );
 
-        // ==========================================
-        // HANDLE DISCONNECTS
-        // ==========================================
+        // ------------------------------------------
+        // HANDLE DISCONNECT
+        // ------------------------------------------
 
         connection.on(
             VoiceConnectionStatus.Disconnected,
             async () => {
 
-                console.log('⚠️ Voice connection disconnected.');
+                console.log(
+                    '⚠️ Voice connection disconnected.'
+                );
 
                 try {
 
                     await Promise.race([
+
                         entersState(
                             connection,
                             VoiceConnectionStatus.Signalling,
@@ -169,11 +188,14 @@ client.on('interactionCreate', async interaction => {
                             VoiceConnectionStatus.Connecting,
                             5000
                         )
+
                     ]);
 
-                    console.log('🔄 Voice connection recovering...');
+                    console.log(
+                        '🔄 Voice connection recovering...'
+                    );
 
-                } catch (error) {
+                } catch {
 
                     console.log(
                         '❌ Voice connection could not recover.'
@@ -184,18 +206,23 @@ client.on('interactionCreate', async interaction => {
             }
         );
 
-        // ==========================================
-        // MUSIC FILE
-        // ==========================================
+        // ------------------------------------------
+        // FIND MUSIC FILE
+        // ------------------------------------------
 
         const audioPath = path.join(
             __dirname,
             'music.mp3'
         );
 
-        console.log(`🎧 Looking for music file: ${audioPath}`);
+        console.log(
+            `🎧 Looking for music file: ${audioPath}`
+        );
 
-        // Check that music.mp3 exists
+        // ------------------------------------------
+        // MAKE SURE MUSIC EXISTS
+        // ------------------------------------------
+
         if (!fs.existsSync(audioPath)) {
 
             console.error(
@@ -205,39 +232,45 @@ client.on('interactionCreate', async interaction => {
             connection.destroy();
 
             await interaction.editReply(
-                '❌ I cannot find `music.mp3`. Make sure it is in the same folder as `index.js`.'
+                '❌ I cannot find `music.mp3`. Make sure `music.mp3` is in the SAME folder as `index.js` and has been uploaded to GitHub.'
             );
 
             return;
         }
 
-        console.log('✅ music.mp3 found.');
+        console.log(
+            '✅ music.mp3 found!'
+        );
 
-        // ==========================================
+        // ------------------------------------------
         // CREATE AUDIO PLAYER
-        // ==========================================
+        // ------------------------------------------
 
         const player = createAudioPlayer();
 
-        // Connect player to Discord voice connection
         connection.subscribe(player);
 
-        console.log('🎵 Audio player created.');
+        console.log(
+            '🎵 Audio player created.'
+        );
 
-        // ==========================================
-        // PLAY MUSIC FUNCTION
-        // ==========================================
+        // ------------------------------------------
+        // PLAY MUSIC
+        // ------------------------------------------
 
         const playMusic = () => {
 
             try {
 
-                console.log('▶️ Starting music...');
+                console.log(
+                    '▶️ Starting music...'
+                );
 
                 const resource = createAudioResource(
                     audioPath,
                     {
-                        inputType: StreamType.Arbitrary
+                        inputType:
+                            StreamType.Arbitrary
                     }
                 );
 
@@ -252,9 +285,9 @@ client.on('interactionCreate', async interaction => {
             }
         };
 
-        // ==========================================
+        // ------------------------------------------
         // LOOP MUSIC
-        // ==========================================
+        // ------------------------------------------
 
         player.on('idle', () => {
 
@@ -265,9 +298,9 @@ client.on('interactionCreate', async interaction => {
             playMusic();
         });
 
-        // ==========================================
-        // AUDIO ERRORS
-        // ==========================================
+        // ------------------------------------------
+        // AUDIO ERROR
+        // ------------------------------------------
 
         player.on('error', error => {
 
@@ -277,15 +310,15 @@ client.on('interactionCreate', async interaction => {
             );
         });
 
-        // ==========================================
+        // ------------------------------------------
         // START MUSIC
-        // ==========================================
+        // ------------------------------------------
 
         playMusic();
 
-        // ==========================================
-        // CONFIRM TO USER
-        // ==========================================
+        // ------------------------------------------
+        // CONFIRM
+        // ------------------------------------------
 
         await interaction.editReply(
             '🎶 Cozy music stream started successfully!'
@@ -302,13 +335,16 @@ client.on('interactionCreate', async interaction => {
             error
         );
 
-        // ==========================================
-        // SAFE ERROR RESPONSE
-        // ==========================================
+        // ------------------------------------------
+        // SAFELY RESPOND TO DISCORD
+        // ------------------------------------------
 
         try {
 
-            if (interaction.deferred || interaction.replied) {
+            if (
+                interaction.deferred ||
+                interaction.replied
+            ) {
 
                 await interaction.editReply(
                     '❌ Something went wrong starting the music.'
@@ -326,7 +362,7 @@ client.on('interactionCreate', async interaction => {
         } catch (replyError) {
 
             console.error(
-                '❌ Could not send Discord error reply:',
+                '❌ Could not send error reply:',
                 replyError
             );
         }
@@ -334,7 +370,7 @@ client.on('interactionCreate', async interaction => {
 });
 
 // ==========================================
-// DISCORD CLIENT ERRORS
+// DISCORD ERRORS
 // ==========================================
 
 client.on('error', error => {
@@ -346,18 +382,27 @@ client.on('error', error => {
 });
 
 // ==========================================
-// LOGIN
+// CHECK TOKEN
 // ==========================================
 
 if (!process.env.DISCORD_TOKEN) {
 
     console.error(
-        '❌ DISCORD_TOKEN is missing from Render Environment Variables!'
+        '❌ DISCORD_TOKEN is missing!'
     );
 
     process.exit(1);
 }
 
-console.log('🔑 Logging into Discord...');
+// ==========================================
+// LOGIN
+// ==========================================
 
-client.login(process.env.DISCORD_TOKEN);
+console.log(
+    '🔑 Logging into Discord...'
+);
+
+client.login(
+    process.env.DISCORD_TOKEN
+);
+```
