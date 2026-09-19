@@ -1,200 +1,675 @@
-const { Client, GatewayIntentBits } = require('discord.js');
-const https = require('https');
-const http = require('http');
+const {
+    Client,
+    GatewayIntentBits,
+    REST,
+    Routes
+} = require('discord.js');
+
+const {
+    joinVoiceChannel,
+    createAudioPlayer,
+    createAudioResource,
+    VoiceConnectionStatus,
+    StreamType,
+    entersState,
+    AudioPlayerStatus
+} = require('@discordjs/voice');
+
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+
+// =====================================================
+// SETTINGS
+// =====================================================
+
+process.env.IPV4_ONLY = 'true';
+
+const PORT = process.env.PORT || 10000;
+
+// How long to wait before trying to reconnect
+const RECONNECT_DELAY = 5000;
+
+// =====================================================
+// WEB SERVER
+// =====================================================
+
+const app = express();
+
+app.get('/', (req, res) => {
+    res.send('🎶 Cozy Music Bot is alive and streaming!');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌐 Web server running on port ${PORT}`);
+});
+
+// =====================================================
+// DISCORD CLIENT
+// =====================================================
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildMessages
     ]
 });
 
-const TOKEN = process.env.DISCORD_TOKEN;
-const CHANNEL_ID = '1550949617640677528';
-const YOUR_DISCORD_USER_ID = '1162102433032454254';
+// =====================================================
+// MUSIC STATE
+// =====================================================
 
-// JSONBin credentials from Render environment variables
-const JSONBIN_KEY = process.env.JSONBIN_KEY;
-const JSONBIN_BIN_ID = process.env.JSONBIN_BIN_ID;
+// The bot remembers the last place it was playing.
+let currentGuildId = null;
+let currentChannelId = null;
 
-let activeAnswer = null;
-let recentQuestions = [];
+// Current voice connection
+let connection = null;
 
-// --- BULLETPROOF CLOUD STORAGE FUNCTIONS ---
-function loadScores() {
-    return new Promise((resolve) => {
-        if (!JSONBIN_KEY || !JSONBIN_BIN_ID) {
-            return resolve({});
-        }
+// Current audio player
+let player = null;
 
-        const options = {
-            hostname: 'api.jsonbin.io',
-            path: `/v3/b/${JSONBIN_BIN_ID}/latest`,
-            method: 'GET',
-            headers: {
-                'X-Master-Key': JSONBIN_KEY
-            }
-        };
+// Prevent multiple reconnect attempts
+let reconnecting = false;
 
-        // Safety timeout so it never freezes forever if the network lags
-        const req = https.get(options, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                try {
-                    const parsed = JSON.parse(data);
-                    resolve(parsed.record || {});
-                } catch (err) {
-                    resolve({});
-                }
-            });
-        });
+// Whether the music session should continue
+let musicSessionActive = false;
 
-        req.on('error', () => {
-            resolve({});
-        });
+// =====================================================
+// MUSIC FILE
+// =====================================================
 
-        req.setTimeout(3000, () => {
-            req.destroy();
-            resolve({});
-        });
-    });
+const audioPath = path.join(
+    __dirname,
+    'music.mp3'
+);
+
+// =====================================================
+// CHECK MUSIC FILE
+// =====================================================
+
+if (fs.existsSync(audioPath)) {
+
+    console.log(
+        `🎧 Music file found: ${audioPath}`
+    );
+
+} else {
+
+    console.error(
+        `❌ WARNING: music.mp3 was not found at: ${audioPath}`
+    );
 }
 
-function saveScores(scores) {
-    if (!JSONBIN_KEY || !JSONBIN_BIN_ID) return;
+// =====================================================
+// BOT READY
+// =====================================================
 
-    const data = JSON.stringify(scores);
-    const options = {
-        hostname: 'api.jsonbin.io',
-        path: `/v3/b/${JSONBIN_BIN_ID}`,
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Master-Key': JSONBIN_KEY,
-            'Content-Length': Buffer.byteLength(data)
+client.once('ready', async () => {
+
+    console.log('========================================');
+    console.log('🤖 COZY MUSIC BOT ONLINE');
+    console.log(`👤 Logged in as ${client.user.tag}`);
+    console.log('========================================');
+
+    const commands = [
+        {
+            name: 'play',
+            description:
+                'Start streaming cozy music in your voice channel'
         }
-    };
+    ];
 
-    const req = https.request(options, () => {});
-    req.on('error', () => {});
-    req.write(data);
-    req.end();
-}
+    const rest = new REST({ version: '10' })
+        .setToken(process.env.DISCORD_TOKEN);
 
-// Helper function to load trivia questions from teagames.txt
-function loadTriviaQuestions() {
     try {
-        const fs = require('fs');
-        if (fs.existsSync('teagames.txt')) {
-            const data = fs.readFileSync('teagames.txt', 'utf8');
-            const lines = data.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-            const questions = [];
-            for (const line of lines) {
-                if (line.includes('|')) {
-                    const parts = line.split('|');
-                    const question = parts[0].trim();
-                    const answer = parts[1].trim().toLowerCase();
-                    questions.push({ question, answer });
-                }
-            }
-            return questions;
-        }
-    } catch (err) {
-        console.error('Error loading trivia:', err);
-    }
-    return [];
-}
 
-client.once('ready', () => {
-    console.log(`CozyTavernBot is online as ${client.user.tag}! 🍵`);
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            {
+                body: commands
+            }
+        );
+
+        console.log(
+            '✅ Slash commands registered.'
+        );
+
+    } catch (error) {
+
+        console.error(
+            '❌ Failed to register slash commands:',
+            error
+        );
+    }
 });
 
-client.on('messageCreate', async message => {
-    if (message.author.bot) return;
+// =====================================================
+// CREATE AUDIO PLAYER
+// =====================================================
 
-    // 1. Handle !toptea leaderboard command
-    if (message.content === '!toptea') {
-        const scores = await loadScores();
-        const sortedScores = Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 5);
+function createMusicPlayer() {
 
-        if (sortedScores.length === 0) {
-            return message.reply('🌱 No tea scores recorded yet! Be the first to brew a correct answer.');
+    // If a player already exists, destroy the old one
+    if (player) {
+
+        try {
+            player.stop();
+        } catch (error) {
+            // Ignore cleanup errors
+        }
+    }
+
+    player = createAudioPlayer();
+
+    // -------------------------------------------------
+    // MUSIC FINISHED
+    // -------------------------------------------------
+
+    player.on(
+        AudioPlayerStatus.Idle,
+        () => {
+
+            if (!musicSessionActive) {
+                return;
+            }
+
+            console.log(
+                '🔁 Music finished. Restarting...'
+            );
+
+            playMusic();
+        }
+    );
+
+    // -------------------------------------------------
+    // PLAYER ERROR
+    // -------------------------------------------------
+
+    player.on(
+        'error',
+        error => {
+
+            console.error(
+                '❌ Audio player error:',
+                error
+            );
+
+            if (musicSessionActive) {
+
+                console.log(
+                    '🔄 Restarting audio player...'
+                );
+
+                setTimeout(() => {
+
+                    if (musicSessionActive) {
+                        playMusic();
+                    }
+
+                }, 2000);
+            }
+        }
+    );
+
+    return player;
+}
+
+// =====================================================
+// PLAY MUSIC
+// =====================================================
+
+function playMusic() {
+
+    if (!musicSessionActive) {
+        return;
+    }
+
+    if (!connection) {
+
+        console.log(
+            '⚠️ No voice connection available.'
+        );
+
+        return;
+    }
+
+    if (!fs.existsSync(audioPath)) {
+
+        console.error(
+            '❌ Cannot play music.mp3 because it does not exist.'
+        );
+
+        return;
+    }
+
+    try {
+
+        console.log(
+            '▶️ Starting music...'
+        );
+
+        const resource = createAudioResource(
+            audioPath,
+            {
+                inputType: StreamType.Arbitrary
+            }
+        );
+
+        // Make sure we have a player
+        if (!player) {
+            createMusicPlayer();
         }
 
-        let leaderboardText = '🏆 **Cozy Tavern Tea Leaderboard** 🏆\n';
-        sortedScores.forEach(([userId, pts], index) => {
-            leaderboardText += `${index + 1}. <@${userId}> — **${pts}** points\n`;
+        // Subscribe player to connection
+        connection.subscribe(player);
+
+        player.play(resource);
+
+        console.log(
+            '🎵 Music is playing.'
+        );
+
+    } catch (error) {
+
+        console.error(
+            '❌ Could not start music:',
+            error
+        );
+
+        if (musicSessionActive) {
+
+            setTimeout(() => {
+
+                playMusic();
+
+            }, 3000);
+        }
+    }
+}
+
+// =====================================================
+// CONNECT TO VOICE
+// =====================================================
+
+async function connectToVoice() {
+
+    if (!musicSessionActive) {
+        return;
+    }
+
+    if (!currentGuildId || !currentChannelId) {
+
+        console.log(
+            '❌ I do not know which voice channel to reconnect to.'
+        );
+
+        return;
+    }
+
+    try {
+
+        const guild = client.guilds.cache.get(
+            currentGuildId
+        );
+
+        if (!guild) {
+
+            console.error(
+                '❌ Could not find the Discord server.'
+            );
+
+            return;
+        }
+
+        const voiceChannel = guild.channels.cache.get(
+            currentChannelId
+        );
+
+        if (!voiceChannel) {
+
+            console.error(
+                '❌ Could not find the voice channel.'
+            );
+
+            return;
+        }
+
+        console.log(
+            `🔊 Connecting to ${voiceChannel.name}...`
+        );
+
+        // Destroy old connection if one exists
+        if (connection) {
+
+            try {
+                connection.destroy();
+            } catch (error) {
+                // Ignore cleanup errors
+            }
+
+            connection = null;
+        }
+
+        // Create new connection
+        connection = joinVoiceChannel({
+
+            channelId: voiceChannel.id,
+
+            guildId: guild.id,
+
+            adapterCreator:
+                guild.voiceAdapterCreator,
+
+            selfDeaf: true
         });
 
-        return message.reply(leaderboardText);
-    }
+        console.log(
+            '🔊 Voice connection created.'
+        );
 
-    // 2. Handle !tea-score command
-    if (message.content === '!tea-score') {
-        const scores = await loadScores();
-        const userScore = scores[message.author.id] || 0;
-        return message.reply(`Your current cozy tea score is: **${userScore}** points! 🍵`);
-    }
+        // -------------------------------------------------
+        // CONNECTION READY
+        // -------------------------------------------------
 
-    // 3. Check guesses from anyone in the designated channel
-    if (activeAnswer && message.channel.id === CHANNEL_ID) {
-        const userGuess = message.content.trim().toLowerCase();
+        try {
 
-        if (userGuess.includes(activeAnswer)) {
-            let scores = await loadScores();
-            scores[message.author.id] = (scores[message.author.id] || 0) + 1;
-            saveScores(scores);
+            await entersState(
+                connection,
+                VoiceConnectionStatus.Ready,
+                15000
+            );
 
-            message.channel.send(`✨ Spot on, <@${message.author.id}>! You brewed it right. The answer was **${activeAnswer}**. (+1 point) 🍵`);
-            activeAnswer = null;
-        }
-    }
+            console.log(
+                '✅ Voice connection is ready.'
+            );
 
-    // 4. Admin command to trigger a trivia question (with anti-repeat logic)
-    if (message.content === '!starttea' && message.author.id === YOUR_DISCORD_USER_ID) {
-        const questions = loadTriviaQuestions();
-        if (questions.length === 0) {
-            return message.reply('⚠️ No trivia questions found in `teagames.txt`!');
-        }
+            reconnecting = false;
 
-        let availableQuestions = questions.filter(q => !recentQuestions.includes(q.question));
+            // Create a fresh player
+            createMusicPlayer();
 
-        if (availableQuestions.length === 0) {
-            recentQuestions = [];
-            availableQuestions = questions;
-        }
+            // Start music
+            playMusic();
 
-        const randomQ = availableQuestions[Math.floor(Math.random() * availableQuestions.length)];
-        activeAnswer = randomQ.answer;
+        } catch (error) {
 
-        recentQuestions.push(randomQ.question);
-        if (recentQuestions.length > 5) {
-            recentQuestions.shift();
+            console.error(
+                '❌ Voice connection did not become ready:',
+                error
+            );
+
+            connection.destroy();
+
+            connection = null;
+
+            scheduleReconnect();
         }
 
-        return message.channel.send(`${randomQ.question}`);
+        // -------------------------------------------------
+        // CONNECTION DISCONNECTED
+        // -------------------------------------------------
+
+        connection.on(
+            VoiceConnectionStatus.Disconnected,
+            () => {
+
+                console.log(
+                    '⚠️ Discord voice connection disconnected!'
+                );
+
+                if (musicSessionActive) {
+
+                    scheduleReconnect();
+                }
+            }
+        );
+
+        // -------------------------------------------------
+        // CONNECTION DESTROYED
+        // -------------------------------------------------
+
+        connection.on(
+            VoiceConnectionStatus.Destroyed,
+            () => {
+
+                console.log(
+                    '⚠️ Voice connection destroyed.'
+                );
+
+                if (musicSessionActive) {
+
+                    scheduleReconnect();
+                }
+            }
+        );
+
+    } catch (error) {
+
+        console.error(
+            '❌ Voice connection error:',
+            error
+        );
+
+        connection = null;
+
+        if (musicSessionActive) {
+
+            scheduleReconnect();
+        }
     }
-});
-
-// Keep Render web service happy
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('CozyTavernBot is alive!\n');
-});
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server is listening on port ${PORT}`);
-});
-
-client.login(TOKEN);
-
-// --- SAFE KEEP-ALIVE PING ---
-const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
-
-if (RENDER_URL) {
-    setInterval(() => {
-        https.get(RENDER_URL, (res) => {}).on('error', (err) => {});
-    }, 10 * 1000); 
 }
+
+// =====================================================
+// AUTOMATIC RECONNECT
+// =====================================================
+
+function scheduleReconnect() {
+
+    if (!musicSessionActive) {
+        return;
+    }
+
+    if (reconnecting) {
+        return;
+    }
+
+    reconnecting = true;
+
+    console.log(
+        `🔄 Automatic reconnect in ${RECONNECT_DELAY / 1000} seconds...`
+    );
+
+    setTimeout(async () => {
+
+        reconnecting = false;
+
+        if (!musicSessionActive) {
+            return;
+        }
+
+        console.log(
+            '🔄 Attempting automatic reconnect...'
+        );
+
+        await connectToVoice();
+
+    }, RECONNECT_DELAY);
+}
+
+// =====================================================
+// /PLAY COMMAND
+// =====================================================
+
+client.on(
+    'interactionCreate',
+    async interaction => {
+
+        if (!interaction.isChatInputCommand()) {
+            return;
+        }
+
+        if (interaction.commandName !== 'play') {
+            return;
+        }
+
+        console.log(
+            `🎵 /play used by ${interaction.user.tag}`
+        );
+
+        try {
+
+            // Respond immediately
+            await interaction.deferReply();
+
+            // ---------------------------------------------
+            // CHECK USER VOICE CHANNEL
+            // ---------------------------------------------
+
+            const member = interaction.member;
+
+            const voiceChannel =
+                member?.voice?.channel;
+
+            if (!voiceChannel) {
+
+                await interaction.editReply(
+                    '❌ You need to be in a voice channel first!'
+                );
+
+                return;
+            }
+
+            // ---------------------------------------------
+            // SAVE MUSIC LOCATION
+            // ---------------------------------------------
+
+            currentGuildId =
+                voiceChannel.guild.id;
+
+            currentChannelId =
+                voiceChannel.id;
+
+            // Tell the reconnect system to keep running
+            musicSessionActive = true;
+
+            reconnecting = false;
+
+            console.log(
+                `📌 Remembering voice channel: ${voiceChannel.name}`
+            );
+
+            // ---------------------------------------------
+            // CONNECT
+            // ---------------------------------------------
+
+            await connectToVoice();
+
+            // ---------------------------------------------
+            // DISCORD RESPONSE
+            // ---------------------------------------------
+
+            await interaction.editReply(
+                '🎶 Cozy music started! I will automatically reconnect if the voice connection drops.'
+            );
+
+        } catch (error) {
+
+            console.error(
+                '❌ /play error:',
+                error
+            );
+
+            try {
+
+                if (
+                    interaction.deferred ||
+                    interaction.replied
+                ) {
+
+                    await interaction.editReply(
+                        '❌ Something went wrong starting the music. Check the Render logs.'
+                    );
+
+                } else {
+
+                    await interaction.reply({
+                        content:
+                            '❌ Something went wrong starting the music.',
+                        ephemeral: true
+                    });
+                }
+
+            } catch (replyError) {
+
+                console.error(
+                    '❌ Could not send Discord error reply:',
+                    replyError
+                );
+            }
+        }
+    }
+);
+
+// =====================================================
+// DISCORD CLIENT ERROR
+// =====================================================
+
+client.on(
+    'error',
+    error => {
+
+        console.error(
+            '❌ Discord client error:',
+            error
+        );
+    }
+);
+
+// =====================================================
+// DISCORD SHARD DISCONNECT
+// =====================================================
+
+client.on(
+    'shardDisconnect',
+    (event, shardId) => {
+
+        console.log(
+            `⚠️ Discord connection lost on shard ${shardId}.`
+        );
+
+        if (musicSessionActive) {
+
+            console.log(
+                '🔄 Discord should reconnect automatically...'
+            );
+        }
+    }
+);
+
+// =====================================================
+// CHECK TOKEN
+// =====================================================
+
+if (!process.env.DISCORD_TOKEN) {
+
+    console.error(
+        '❌ DISCORD_TOKEN is missing from Render Environment Variables!'
+    );
+
+    process.exit(1);
+}
+
+// =====================================================
+// LOGIN
+// =====================================================
+
+console.log(
+    '🔑 Logging into Discord...'
+);
+
+client.login(
+    process.env.DISCORD_TOKEN
+);
